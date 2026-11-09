@@ -1067,3 +1067,9 @@ else if (contentError && DEAD_PATTERN.test(contentError)) item.invalid = { reaso
 ### 迁移
 `migrateArchivedV1`：存量 `status='archived'` → `'done'`，保留 `archivedAt`，
 并把 `readAt/updatedAt` 刷新为当前时间——否则会立刻被 retention 判过期删掉。
+
+### 快捷移除的二次确认（2026-11-09 追加）
+卡片 / 收件箱行 / 时效行 / 大图灯箱上的垃圾桶图标以前直接调接口，误点一次就会把条目
+**同时从 B站稍后再看删掉且不可撤销**。现在这些入口统一走 `runAction(item,'remove')`，
+只把目标塞进 `confirmRemove` 状态，弹出 `.wl-modal-mask` 确认框（标题/条目名/后果说明 + 取消/确认移除），
+确认后才真正 `POST /delete`。抽屉与批量栏原有的内联确认保持不变。

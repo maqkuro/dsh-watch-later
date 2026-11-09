@@ -8004,6 +8004,12 @@ window.__ModuleLoader__.load({
         return () => window.clearTimeout(timer)
       }, [toast])
 
+      // 快捷移除的二次确认。
+      // 为什么要有：卡片 / 收件箱 / 时效行 / 大图灯箱上的垃圾桶图标一点就走「移除」，
+      // 而移除会把条目同时从 B站稍后再看里删掉，不可撤销 —— 误点一下真内容就没了。
+      // 所以这些快捷入口统一先弹确认，确认后才真正调接口。
+      const [confirmRemove, setConfirmRemove] = React.useState(null)
+
       const perform = React.useCallback(
         async (key, task, message) => {
           if (busyRef.current[key]) return null
@@ -8030,6 +8036,13 @@ window.__ModuleLoader__.load({
         [notify, snapshotRes.reload],
       )
 
+      const confirmRemoveNow = () => {
+        const target = confirmRemove
+        if (!target) return Promise.resolve(null)
+        setConfirmRemove(null)
+        return perform(target.key, () => postJson(API.remove, { id: target.id }), tr(t, 'toastRemoved'))
+      }
+
       const actionMessage = (action) => {
         if (action === 'done') return tr(t, 'toastDone')
         if (action === 'remove') return tr(t, 'toastRemoved')
@@ -8040,6 +8053,11 @@ window.__ModuleLoader__.load({
 
       const runAction = (item, action, extra) => {
         const id = asText(item && item.id)
+        // 移除不可撤销（会同步删掉 B站那边），快捷入口一律先确认
+        if (action === 'remove') {
+          setConfirmRemove({ id, key: 'remove:' + id, title: asText(item && item.title) })
+          return Promise.resolve(null)
+        }
         return perform(
           id,
           () => postJson(API.action, Object.assign({ id, action }, extra || {})),
@@ -8486,6 +8504,33 @@ window.__ModuleLoader__.load({
               onReload: () => snapshotRes.reload(),
               onClose: () => setAuthOpen(false),
             })
+          : null,
+        confirmRemove
+          ? h(
+              'div',
+              { className: 'wl-modal-mask', role: 'presentation' },
+              h(
+                'div',
+                { className: 'wl-modal', role: 'dialog', 'aria-modal': 'true' },
+                h('h3', { className: 'wl-modal-title' }, tr(t, 'removeConfirm')),
+                confirmRemove.title ? h('p', { className: 'wl-modal-subject' }, confirmRemove.title) : null,
+                h('p', { className: 'wl-field-hint wl-remove-hint' }, tr(t, 'removeConfirmHint')),
+                h(
+                  'div',
+                  { className: 'wl-modal-actions' },
+                  h(
+                    'button',
+                    { type: 'button', className: 'wl-btn wl-btn-sm', onClick: () => setConfirmRemove(null) },
+                    tr(t, 'cancel'),
+                  ),
+                  h(
+                    'button',
+                    { type: 'button', className: 'wl-btn wl-btn-sm wl-btn-danger', onClick: confirmRemoveNow },
+                    tr(t, 'removeConfirm'),
+                  ),
+                ),
+              ),
+            )
           : null,
         toast
           ? h(
@@ -9562,6 +9607,26 @@ window.__ModuleLoader__.load({
       .wl-dialog-thumb-empty { display: flex; align-items: center; justify-content: center; color: var(--wl-muted); }
       .wl-image-pick-side { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 
+      /* 快捷移除的二次确认弹窗 */
+      .wl-modal-mask {
+        position: fixed; inset: 0; z-index: 60;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(0, 0, 0, .38); backdrop-filter: blur(2px);
+      }
+      .wl-modal {
+        width: min(420px, calc(100vw - 48px));
+        padding: 18px 18px 14px;
+        border-radius: 12px;
+        background: var(--wl-surface-2);
+        border: 1px solid var(--wl-line-2);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, .28);
+      }
+      .wl-modal-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+      .wl-modal-subject {
+        margin: 0 0 8px; font-size: 13px; color: var(--wl-muted);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .wl-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
       .wl-toast {
         position: fixed; top: 16px; right: 16px; z-index: 300;
         display: flex; align-items: flex-start; gap: 7px;
