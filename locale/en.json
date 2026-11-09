@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "Watch later",
+    "description": "Collect forwarded images, Xiaohongshu and WeChat articles, links, and show titles; rank them by importance and urgency, flag time-sensitive items, and sync Bilibili and Douyin watch-later lists."
+  },
+  "tabTopics": "Topics",
+  "topicsEmptyTitle": "No items to group yet",
+  "topicsEmptyDesc": "Forward something to DaFeiyu and it will be tagged automatically",
+  "topicsUnsorted": "Unsorted",
+  "topicsMore": "{n} more"
+}

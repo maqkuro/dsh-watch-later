@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-watch-later
+      name: '@local/dsh-watch-later'

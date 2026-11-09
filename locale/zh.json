@@ -1,0 +1,11 @@
+{
+  "meta": {
+    "title": "稍后再看",
+    "description": "把转发的图片、小红书/公众号文章、链接和剧名收进来，按重要度与紧急度打分、提醒时效性，并统一同步 B站与抖音的稍后再看。"
+  },
+  "tabTopics": "分类",
+  "topicsEmptyTitle": "还没有可分类的条目",
+  "topicsEmptyDesc": "把内容转发给大肥鱼，它会自动打上分类标签",
+  "topicsUnsorted": "待归档",
+  "topicsMore": "还有 {n} 条"
+}

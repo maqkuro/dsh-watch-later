@@ -1,0 +1,92 @@
+{
+  "name": "@maqkuro/dsh-watch-later",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DSH 侧边栏「稍后再看」中心：分类、打分、时效性提醒，统一收进转发的图片/文章/链接/剧集，并同步 B站与抖音稍后再看",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "store.js",
+    "api.js",
+    "tools.js",
+    "ai.js",
+    "organize-core.js",
+    "organize.js",
+    "ingest.js",
+    "enrich.js",
+    "import-text.js",
+    "share-inbox.js",
+    "sync-run.js",
+    "score.js",
+    "classify.js",
+    "client.js",
+    "sync",
+    "login",
+    "test",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "CONTRACT.md",
+    "content.js",
+    "wechat.js",
+    "cluster.js",
+    "library-push.js",
+    "zip-ingest.js",
+    "cover-backfill.js",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "license": "MIT",
+  "author": {
+    "name": "maqkuro"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "watch-later",
+    "read-later",
+    "稍后再看",
+    "wechat",
+    "xiaohongshu",
+    "ai-classification"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maqkuro/dsh-watch-later.git"
+  },
+  "homepage": "https://github.com/maqkuro/dsh-watch-later#readme",
+  "bugs": {
+    "url": "https://github.com/maqkuro/dsh-watch-later/issues"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-locale": "^0.1.5-rc.3 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.5-rc.3 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.5-rc.3 || ^0.2.0-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "^0.1.5-rc.3 || ^0.2.0-rc.1"
+  }
+}
