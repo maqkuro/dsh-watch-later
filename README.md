@@ -10,6 +10,33 @@
 - 数据目录：`~/.dsh/storages/watch-later/`
 - 依赖：无（纯 Node ESM + React 内置模块；不额外安装任何包）
 
+![今日视图：按重要度 / 紧急度 / 时效排序，顶部给出今日焦点](docs/panel-today.png)
+
+![分类视图：12 个固定分类，同类内容自动归拢](docs/panel-topics.png)
+
+## 安装
+
+**要求**：DeepSeek Harness（`>= 0.2.0-rc.1`）、Node.js `>= 22.19`。
+
+```bash
+# 1. 克隆到 DSH 工作区
+git clone https://github.com/maqkuro/dsh-watch-later.git \
+  ~/Documents/deepseek-harness/default-workspace/dsh-watch-later
+
+# 2. 加进你的 profile（把 desktop 换成实际的 profile 名）
+dsh plugin --profile desktop add \
+  ~/Documents/deepseek-harness/default-workspace/dsh-watch-later
+```
+
+装完**刷新一次 DSH 页面**，左侧栏即出现「Watch later / 稍后再看」入口。
+首次打开会自动建目录（`~/.dsh/storages/watch-later/`），不需要额外配置。
+
+> ⚠️ **包名必须是 `@local/` 前缀**。DSH 桌面端只挂载 `@local/` 工作区插件；
+> 改成其他 scope 后 bundle patch 里的 `name` 解析不到，插件整个不挂载
+> （表现为侧边栏没有入口、`watch_later_*` 工具不可用）。
+
+卸载见文末「安装 / 卸载」。
+
 ## 2026-11-06 晚更新（本次修复）
 
 - **分享「多选就失败」已修**：macOS 分享扩展升级到 0.5.0 —— 支持一次多选**图片 / 文字 / 链接**（合并成一个

@@ -40,7 +40,8 @@
     "zip-ingest.js",
     "cover-backfill.js",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs"
   ],
   "dsh": {
     "bundle": {
