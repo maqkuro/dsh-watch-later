@@ -23,6 +23,7 @@ window.__ModuleLoader__.load({
       update: API_BASE + '/update',
       action: API_BASE + '/action',
       remove: API_BASE + '/delete',
+      invalid: API_BASE + '/invalid',
       aiReview: API_BASE + '/ai/review',
       agentEnrich: API_BASE + '/agent/enrich',
       aiOrganize: API_BASE + '/ai/organize',
@@ -121,6 +122,7 @@ window.__ModuleLoader__.load({
       tabToday: '今日',
       tabInbox: '收件箱',
       tabLibrary: '资料库',
+      tabInvalid: '失效',
       tabTimeline: '时效',
       tabSources: '同步',
       tabSettings: '设置',
@@ -447,6 +449,19 @@ window.__ModuleLoader__.load({
       batchFailed: '{n} 张操作失败',
       batchBusy: '处理中…',
       confirmDeleteSelected: '确认删除 {n} 张',
+      invalidTotal: '失效 {n} 条',
+      invalidSelected: '已选 {n} 条',
+      invalidRestore: '恢复',
+      invalidRestoreToast: '已恢复 {n} 条',
+      invalidDeleteToast: '已删除 {n} 条',
+      invalidClearAll: '清空全部',
+      invalidClearConfirm: '确认清空 {n} 条',
+      invalidDeleteConfirm: '确认删除 {n} 条',
+      invalidEmptyTitle: '没有失效条目',
+      invalidEmptyDesc: '打不开或被删掉的笔记和链接会收进这里，确认后可以批量清理或恢复。',
+      invalidNotice: '这些条目在原始站点已打不开；删除只影响本地，「恢复」会把它们放回正常列表。',
+      invalidNoReason: '未知原因',
+      invalidAt: '失效于 {time}',
       imagesEmptyTitle: '还没有图片',
       imagesEmptyDesc: '截图后分享到 DeepSeek Harness，或在面板 + 添加 → 图片',
       goAdd: '去添加',
@@ -589,6 +604,7 @@ window.__ModuleLoader__.load({
       tabToday: 'Today',
       tabInbox: 'Inbox',
       tabLibrary: 'Library',
+      tabInvalid: 'Invalid',
       tabTimeline: 'Timing',
       tabSources: 'Sync',
       tabSettings: 'Settings',
@@ -915,6 +931,19 @@ window.__ModuleLoader__.load({
       batchFailed: '{n} failed',
       batchBusy: 'Working…',
       confirmDeleteSelected: 'Delete {n} images',
+      invalidTotal: '{n} invalid',
+      invalidSelected: '{n} selected',
+      invalidRestore: 'Restore',
+      invalidRestoreToast: 'Restored {n}',
+      invalidDeleteToast: 'Deleted {n}',
+      invalidClearAll: 'Clear all',
+      invalidClearConfirm: 'Clear all {n} items',
+      invalidDeleteConfirm: 'Delete {n} items',
+      invalidEmptyTitle: 'No invalid items',
+      invalidEmptyDesc: 'Notes and links that no longer open or were deleted show up here so you can clean them up or restore them in bulk.',
+      invalidNotice: 'These items no longer open on their source site. Deleting only affects this library; Restore puts them back into the normal list.',
+      invalidNoReason: 'Unknown reason',
+      invalidAt: 'broken at {time}',
       imagesEmptyTitle: 'No images yet',
       imagesEmptyDesc: 'Share a screenshot to DeepSeek Harness, or use + Add → Image in the panel',
       goAdd: 'Add now',
@@ -4170,6 +4199,349 @@ window.__ModuleLoader__.load({
                   : h('p', { className: 'wl-field-hint' }, tr(t, 'archivedEmpty')),
             )
           : null,
+      )
+    }
+
+    /* -------------------------------------------------------------- invalid */
+
+    function InvalidView(props) {
+      const t = props.t
+      const snapshot = asObject(props.snapshot)
+      const alive = React.useRef(true)
+      const [selected, setSelected] = React.useState({})
+      const [pending, setPending] = React.useState('')
+      const [confirm, setConfirm] = React.useState('')
+      const [errors, setErrors] = React.useState([])
+
+      React.useEffect(() => {
+        alive.current = true
+        return () => {
+          alive.current = false
+        }
+      }, [])
+
+      const items = asArray(snapshot.invalidItems).filter(Boolean)
+      const selectedIds = items.map((item) => asText(item.id)).filter((id) => Boolean(id) && Boolean(selected[id]))
+      const allSelected = items.length > 0 && selectedIds.length === items.length
+
+      const toggleSelect = (id) => {
+        if (!id) return
+        setConfirm('')
+        setSelected((previous) => {
+          const next = Object.assign({}, previous)
+          if (next[id]) delete next[id]
+          else next[id] = true
+          return next
+        })
+      }
+
+      const toggleSelectAll = () => {
+        setConfirm('')
+        if (allSelected) {
+          setSelected({})
+          return
+        }
+        const next = {}
+        items.forEach((item) => {
+          const id = asText(item.id)
+          if (id) next[id] = true
+        })
+        setSelected(next)
+      }
+
+      const runDelete = async (ids) => {
+        const list = asArray(ids).filter(Boolean)
+        if (!list.length || pending) return null
+        setPending('delete')
+        setErrors([])
+        try {
+          const data = await postJsonSoft(API.remove, { ids: list })
+          if (!alive.current) return null
+          const deleted = numOr(data.deleted, 0)
+          const failed = numOr(data.failed, 0)
+          const parts = []
+          if (deleted > 0) parts.push(ti(t, 'invalidDeleteToast', { n: deleted }))
+          if (failed > 0) parts.push(ti(t, 'batchFailed', { n: failed }))
+          if (parts.length && typeof props.notify === 'function') {
+            props.notify(parts.join('；'), failed > 0 ? 'warn' : 'ok')
+          }
+          setSelected({})
+          setConfirm('')
+          if (typeof props.onReload === 'function') props.onReload()
+          return data
+        } catch (failure) {
+          if (!alive.current) return null
+          const message = String((failure && failure.message) || failure)
+          setErrors([{ key: 'delete', error: message }])
+          if (typeof props.notify === 'function') props.notify(message, 'error')
+          return null
+        } finally {
+          if (alive.current) setPending('')
+        }
+      }
+
+      const runRestore = async (ids) => {
+        const list = asArray(ids).filter(Boolean)
+        if (!list.length || pending) return null
+        setPending('restore')
+        setErrors([])
+        try {
+          const data = await postJsonSoft(API.invalid, { action: 'clear', ids: list })
+          if (!alive.current) return null
+          const changed = numOr(data.changed, list.length)
+          if (typeof props.notify === 'function') props.notify(ti(t, 'invalidRestoreToast', { n: changed }), 'ok')
+          setSelected({})
+          setConfirm('')
+          if (typeof props.onReload === 'function') props.onReload()
+          return data
+        } catch (failure) {
+          if (!alive.current) return null
+          const message = String((failure && failure.message) || failure)
+          setErrors([{ key: 'restore', error: message }])
+          if (typeof props.notify === 'function') props.notify(message, 'error')
+          return null
+        } finally {
+          if (alive.current) setPending('')
+        }
+      }
+
+      if (!items.length) {
+        return h(EmptyState, { t, icon: 'warning', title: tr(t, 'invalidEmptyTitle'), desc: tr(t, 'invalidEmptyDesc') })
+      }
+
+      const toolbar = h(
+        'div',
+        { className: 'wl-images-toolbar' },
+        h(
+          'div',
+          { className: 'wl-images-stats' },
+          h('span', { className: 'wl-images-stat' }, ti(t, 'invalidTotal', { n: items.length })),
+          h('span', { className: 'wl-spacer' }),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'wl-btn wl-btn-sm',
+              title: allSelected ? tr(t, 'imagesUnselect') : tr(t, 'imagesSelectAll'),
+              disabled: Boolean(pending),
+              onClick: toggleSelectAll,
+            },
+            allSelected ? tr(t, 'imagesUnselect') : tr(t, 'imagesSelectAll'),
+          ),
+          confirm === 'all'
+            ? h(
+                'span',
+                { className: 'wl-confirm' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'wl-btn wl-btn-sm wl-btn-danger',
+                    title: ti(t, 'invalidClearConfirm', { n: items.length }),
+                    disabled: Boolean(pending),
+                    onClick: () => {
+                      runDelete(items.map((item) => asText(item.id)))
+                    },
+                  },
+                  ti(t, 'invalidClearConfirm', { n: items.length }),
+                ),
+                h(
+                  'button',
+                  { type: 'button', className: 'wl-btn wl-btn-sm', title: tr(t, 'cancel'), disabled: Boolean(pending), onClick: () => setConfirm('') },
+                  tr(t, 'cancel'),
+                ),
+              )
+            : h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'wl-btn wl-btn-sm wl-btn-danger-ghost',
+                  title: tr(t, 'invalidClearAll'),
+                  disabled: Boolean(pending),
+                  onClick: () => setConfirm('all'),
+                },
+                h(Icon, { name: 'trash', size: 13 }),
+                tr(t, 'invalidClearAll'),
+              ),
+        ),
+        h('p', { className: 'wl-field-hint wl-invalid-notice' }, tr(t, 'invalidNotice')),
+        selectedIds.length
+          ? h(
+              'div',
+              { className: 'wl-images-batch' },
+              h('span', { className: 'wl-images-selected' }, ti(t, 'invalidSelected', { n: selectedIds.length })),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'wl-btn wl-btn-sm',
+                  title: tr(t, 'invalidRestore'),
+                  disabled: Boolean(pending),
+                  onClick: () => {
+                    runRestore(selectedIds)
+                  },
+                },
+                h(Icon, { name: 'refresh', size: 13 }),
+                pending === 'restore' ? tr(t, 'batchBusy') : tr(t, 'invalidRestore'),
+              ),
+              confirm === 'selected'
+                ? h(
+                    'span',
+                    { className: 'wl-confirm' },
+                    h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'wl-btn wl-btn-sm wl-btn-danger',
+                        title: ti(t, 'invalidDeleteConfirm', { n: selectedIds.length }),
+                        disabled: Boolean(pending),
+                        onClick: () => {
+                          runDelete(selectedIds)
+                        },
+                      },
+                      ti(t, 'invalidDeleteConfirm', { n: selectedIds.length }),
+                    ),
+                    h(
+                      'button',
+                      { type: 'button', className: 'wl-btn wl-btn-sm', title: tr(t, 'cancel'), disabled: Boolean(pending), onClick: () => setConfirm('') },
+                      tr(t, 'cancel'),
+                    ),
+                  )
+                : h(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'wl-btn wl-btn-sm wl-btn-danger-ghost',
+                      title: tr(t, 'deleteItem'),
+                      disabled: Boolean(pending),
+                      onClick: () => setConfirm('selected'),
+                    },
+                    h(Icon, { name: 'trash', size: 13 }),
+                    tr(t, 'deleteItem'),
+                  ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'wl-btn wl-btn-sm',
+                  title: tr(t, 'imagesUnselect'),
+                  disabled: Boolean(pending),
+                  onClick: () => {
+                    setSelected({})
+                    setConfirm('')
+                  },
+                },
+                tr(t, 'imagesUnselect'),
+              ),
+              pending ? h('span', { className: 'wl-images-stat' }, tr(t, 'batchBusy')) : null,
+            )
+          : null,
+        errors.length
+          ? h(
+              'div',
+              { className: 'wl-images-errors' },
+              errors.map((entry, index) =>
+                h(
+                  'div',
+                  { key: (entry.key || 'err') + '-' + index, className: 'wl-error-bar', role: 'alert' },
+                  h(Icon, { name: 'warning', size: 13 }),
+                  h('span', { className: 'wl-error-text' }, entry.error),
+                ),
+              ),
+            )
+          : null,
+      )
+
+      return h(
+        React.Fragment,
+        null,
+        toolbar,
+        h(
+          'div',
+          { className: 'wl-invalid-list' },
+          items.map((item, index) => {
+            const id = asText(item.id)
+            const invalid = asObject(item.invalid)
+            const title = asText(item.title) || tr(t, 'untitled')
+            const reason = asText(invalid.reason) || tr(t, 'invalidNoReason')
+            const at = parseTime(invalid.at)
+            const isSelected = Boolean(selected[id])
+            return h(
+              'div',
+              {
+                key: id || 'invalid-' + index,
+                className: 'wl-invalid-row',
+                'data-selected': isSelected ? 'true' : 'false',
+                role: 'button',
+                tabIndex: 0,
+                title: tr(t, 'imageSelect'),
+                onClick: () => toggleSelect(id),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    toggleSelect(id)
+                  }
+                },
+              },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'wl-image-check wl-invalid-check',
+                  title: tr(t, 'imageSelect'),
+                  'aria-label': tr(t, 'imageSelect'),
+                  'aria-pressed': isSelected ? 'true' : 'false',
+                  onClick: (event) => {
+                    event.stopPropagation()
+                    toggleSelect(id)
+                  },
+                },
+                isSelected ? h(Icon, { name: 'check', size: 13 }) : null,
+              ),
+              h('div', { className: 'wl-inbox-thumb wl-invalid-thumb' }, h(Cover, { t, item, iconSize: 16 })),
+              h(
+                'div',
+                { className: 'wl-invalid-main' },
+                h('h3', { className: 'wl-invalid-title', title }, title),
+                h(
+                  'div',
+                  { className: 'wl-invalid-meta' },
+                  h(KindChip, { t, kind: item.kind }),
+                  h(
+                    'span',
+                    { className: 'wl-invalid-meta-text' },
+                    [asText(item.site), at ? ti(t, 'invalidAt', { time: fmtDateTime(at) }) : ''].filter(Boolean).join(' · '),
+                  ),
+                ),
+                h(
+                  'div',
+                  { className: 'wl-invalid-reason', title: reason },
+                  h(Icon, { name: 'warning', size: 12 }),
+                  h('span', null, reason),
+                ),
+              ),
+              h(
+                'div',
+                { className: 'wl-invalid-actions' },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'wl-btn wl-btn-sm',
+                    title: tr(t, 'invalidRestore'),
+                    disabled: Boolean(pending),
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      runRestore([id])
+                    },
+                  },
+                  h(Icon, { name: 'refresh', size: 13 }),
+                  tr(t, 'invalidRestore'),
+                ),
+              ),
+            )
+          }),
+        ),
       )
     }
 
@@ -7900,6 +8272,8 @@ window.__ModuleLoader__.load({
           onAction: runAction,
           onRestore: restoreArchived,
         })
+      } else if (tab === 'invalid') {
+        content = h(InvalidView, { t, snapshot, notify, onReload: snapshotRes.reload })
       } else if (tab === 'timeline') {
         content = h(TimelineView, { t, snapshot, now, pendingOf, onOpen: openItem, onAction: runAction })
       } else if (tab === 'sources') {
@@ -7936,6 +8310,7 @@ window.__ModuleLoader__.load({
         { id: 'agent', key: 'tabAgent', badge: agentItems.length, icon: 'sparkle' },
         { id: 'inbox', key: 'tabInbox', badge: numOr(counts.inbox, 0) },
         { id: 'library', key: 'tabLibrary', badge: 0 },
+        { id: 'invalid', key: 'tabInvalid', badge: numOr(counts.invalid, 0) },
         { id: 'timeline', key: 'tabTimeline', badge: numOr(counts.timeSensitive, 0) },
         { id: 'sources', key: 'tabSources', badge: 0 },
         { id: 'settings', key: 'tabSettings', badge: 0 },
@@ -9240,6 +9615,27 @@ window.__ModuleLoader__.load({
       .wl-topics-meta { font-size: 11px; color: var(--wl-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .wl-topics-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 1px; }
       .wl-topics-more { margin: 0; padding: 2px 2px 0; font-size: 11.5px; font-weight: 600; color: var(--wl-muted); }
+
+      .wl-invalid-list { display: flex; flex-direction: column; gap: 8px; }
+      .wl-invalid-row {
+        display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+        border-radius: var(--wl-radius); background: var(--wl-surface);
+        border: 1px solid var(--wl-line); cursor: pointer;
+        transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
+      }
+      .wl-invalid-row:hover { border-color: var(--wl-line-2); }
+      .wl-invalid-row[data-selected="true"] { border-color: var(--wl-brand); box-shadow: 0 0 0 2px var(--wl-soft-brand); }
+      .wl-invalid-check { position: static; opacity: 1; flex: none; margin-top: 17px; }
+      .wl-invalid-row .wl-invalid-thumb { width: 56px; height: 56px; }
+      .wl-invalid-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+      .wl-invalid-title { margin: 0; font-size: 12.5px; font-weight: 600; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wl-invalid-meta { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--wl-muted); font-size: 11px; }
+      .wl-invalid-meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wl-invalid-reason { display: flex; align-items: flex-start; gap: 4px; min-width: 0; color: var(--wl-danger); font-size: 11px; line-height: 1.5; }
+      .wl-invalid-reason .wl-icon { flex: none; margin-top: 1px; }
+      .wl-invalid-reason span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wl-invalid-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+      .wl-invalid-notice { margin: 0; }
 
       @media (max-width: 720px) {
         .wl-header { padding: 14px 16px 0; }

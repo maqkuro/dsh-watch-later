@@ -1,5 +1,5 @@
 {
-  "name": "@maqkuro/dsh-watch-later",
+  "name": "@local/dsh-watch-later",
   "version": "1.0.0",
   "type": "module",
   "description": "DSH 侧边栏「稍后再看」中心：分类、打分、时效性提醒，统一收进转发的图片/文章/链接/剧集，并同步 B站与抖音稍后再看",

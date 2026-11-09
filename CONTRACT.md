@@ -1,7 +1,7 @@
 # dsh-watch-later 插件契约（唯一事实来源）
 
 > 项目目录：`（项目根目录）`
-> Bundle 包名：`@maqkuro/dsh-watch-later`；侧边栏 id / main 面板 key：`local-watch-later`
+> Bundle 包名：`@local/dsh-watch-later`；侧边栏 id / main 面板 key：`local-watch-later`
 > 目标：DSH 侧边栏「稍后再看」中心。收进用户从微信文件传输助手转发来的图片、小红书文章、
 > 微信公众号文章、普通链接、剧名等信息，按内容类型分类、按重要程度+紧急程度打分、提示时效性，
 > 并同步 B 站 / 抖音的稍后再看，做成综合稍后再看中心。
@@ -281,7 +281,7 @@ export async function fetchWatchLater({ cookie, signal })
 
 ```js
 window.__ModuleLoader__.load({
-  id: '@maqkuro/dsh-watch-later',
+  id: '@local/dsh-watch-later',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -946,3 +946,33 @@ Chrome 里的信任态会自动放行，正文随即出现。
 - 纯 JS 渲染 / 受限的公众号文章（如部分写真图集），浏览器通道拿到的 HTML 里既无正文也无图片，
   仍然返回"没有提取到正文"的 error，属于准确的能力边界。
 - 扩展连接断开时 bsk 快速失败，条目降级为标题+摘要 + error，不影响入库。
+
+## 28. 「失效」区（2026-11-09 追加）
+
+被作者删掉、链接挂掉的条目不再混在今日/收件箱里，单独进「失效」tab，可批量删除或一键清空。
+
+### 28.1 Item 字段
+
+```jsonc
+{ "invalid": { "reason": "小红书笔记已删除或不可见（404）", "at": "2026-11-09T08:10:00.000Z" } }
+```
+
+`invalid` 为 `null` 表示正常条目。
+
+### 28.2 自动标记（store.setItemContent）
+
+正文抓取写回时，如果 `content.error` 命中 `已删除|页面不见了|笔记不存在|链接已失效|404|不存在或已删除|已下线`，
+自动打上 `invalid`；反过来，如果之后抓到了正文且带图，自动摘掉标记（防误杀）。
+
+### 28.3 快照
+
+- `snapshot.items` / `counts.*` **不含**失效条目；
+- `snapshot.invalidItems: ItemView[]`（按 `invalid.at` 倒序）；
+- `counts.invalid: number`；`counts.total` 仍是全部条目数。
+
+### 28.4 接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/delete` | `{ids:[...]}` 批量删除（最多 2000 条）→ `{ok,deleted,failed}`；`{id}` 单条仍兼容 |
+| POST | `/invalid` | `{action:'mark'|'clear', ids:[...]}`；`clear` 用于「恢复」 |

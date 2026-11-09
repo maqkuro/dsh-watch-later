@@ -5,7 +5,7 @@
 对**时效性内容**（开播/上映/优惠截止/活动）给出倒计时提醒，并把 **B站 / 抖音的稍后再看**
 同步进来，做成一个综合稍后再看中心。
 
-- Bundle：`@maqkuro/dsh-watch-later`
+- Bundle：`@local/dsh-watch-later`
 - 侧边栏入口 id：`local-watch-later`（main 面板 key 相同）
 - 数据目录：`~/.dsh/storages/watch-later/`
 - 依赖：无（纯 Node ESM + React 内置模块；不额外安装任何包）
@@ -213,5 +213,5 @@
 该插件作为本 profile 的 bundle 安装（`plugin_manager install_bundle`，目标：本目录）。
 安装后如果侧边栏没有立刻出现，刷新一次页面即可（客户端脚本更新也需要刷新才生效）。
 
-卸载：在 DSH 插件管理里移除 `@maqkuro/dsh-watch-later` bundle。数据目录不会被自动删除，
+卸载：在 DSH 插件管理里移除 `@local/dsh-watch-later` bundle。数据目录不会被自动删除，
 需要彻底清理时手动删除 `~/.dsh/storages/watch-later/`。

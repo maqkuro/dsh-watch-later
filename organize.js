@@ -278,3 +278,42 @@ export function undoOrganize(id) {
 
 /** 撤掉的封面判断复用一个口径，方便其它模块（面板/工具）判断“有没有真封面”。 */
 export { isRealCover }
+
+/**
+ * 失效巡检：给「还没抓到正文 / 之前报错」的条目重抓一次，把被作者删掉的笔记和挂掉的链接
+ * 自动挂进「失效」区（store.setItemContent 会按错误文案打 invalid 标记）。
+ *
+ * 只跑一次一小批，别在启动时开一堆浏览器会话：默认 20 条、xhs 优先。
+ */
+export async function sweepDeadLinks(options = {}) {
+  const limit = Math.max(1, Math.min(200, Number(options.limit) || 20))
+  const pool = getItems()
+    .filter((item) => item && !item.invalid)
+    .filter((item) => item.kind === 'xhs' || item.kind === 'link' || item.kind === 'article')
+    .filter((item) => {
+      const content = item.content
+      if (!content || typeof content !== 'object') return true
+      if (Array.isArray(content.images) && content.images.length > 0) return false
+      if (!content.text && !content.error) return true
+      const at = Date.parse(content.fetchedAt || '')
+      return !Number.isFinite(at) || Date.now() - at > 3 * 86400e3
+    })
+    .slice(0, limit)
+  const summary = { checked: 0, marked: 0, recovered: 0, still: 0 }
+  for (const item of pool) {
+    try {
+      const content = await resolveContent(item, { force: true })
+      const before = Boolean(item.invalid)
+      const updated = setItemContent(item.id, content)
+      summary.checked += 1
+      const after = Boolean(updated && updated.invalid)
+      if (!before && after) summary.marked += 1
+      else if (before && !after) summary.recovered += 1
+      else summary.still += 1
+    } catch {
+      summary.checked += 1
+      summary.still += 1
+    }
+  }
+  return summary
+}

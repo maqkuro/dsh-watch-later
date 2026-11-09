@@ -7,11 +7,12 @@
  */
 import { applyRoutes } from './api.js'
 import { registerTools, registerPrompt } from './tools.js'
-import { ensureDirs, loadState, stats, DATA_DIR } from './store.js'
+import { ensureDirs, loadState, stats, getSettings, setSettings, DATA_DIR } from './store.js'
 import { startInboxWatcher } from './ingest.js'
 import { startShareWatcher, DEFAULT_SHARE_INBOX } from './share-inbox.js'
 import { startArchiveWatcher, DEFAULT_ARCHIVE_INBOX } from './zip-ingest.js'
 import { backfillCovers, fillMissingCovers } from './cover-backfill.js'
+import { sweepDeadLinks } from './organize.js'
 import { syncWorks } from './works.js'
 import { agentInfo } from './agent.js'
 import { enrichAgentItems } from './ai.js'
@@ -64,6 +65,21 @@ export function apply(ctx) {
       clearTimeout(startup)
       clearInterval(timer)
     }
+  })
+
+  // 失效巡检：启动 40 秒后跑一小批，把被删掉的笔记/挂掉的链接挂进「失效」区（6 小时内只跑一次）
+  ctx.effect(() => {
+    const timer = setTimeout(() => {
+      const settings = getSettings()
+      const last = Date.parse(settings.invalidSweptAt || '') || 0
+      if (Date.now() - last < 6 * 3600 * 1000) return
+      setSettings({ invalidSweptAt: new Date().toISOString() })
+      sweepDeadLinks({ limit: 60 })
+        .then((result) => ctx.logger?.info?.(`[dsh-watch-later] 失效巡检：${JSON.stringify(result)}`))
+        .catch(() => {})
+    }, 40000)
+    timer.unref?.()
+    return () => clearTimeout(timer)
   })
 
   // 影游清单：启动后从影游条目同步作品（Bangumi 封面/标准标题），之后每 10 分钟补一次。

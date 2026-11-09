@@ -337,6 +337,28 @@ export function isUnorganized(ai) {
   return state !== 'done'
 }
 
+/* ---------------------------------------------------------- 失效标记 */
+
+/** 失效原因 → 归一化。markInvalid 只认「已删除/不见了/404」这一类判定。 */
+const DEAD_PATTERN = /已删除|页面不见了|笔记不存在|链接已失效|404|不存在或已删除|已下线/i
+
+function normalizeInvalid(value) {
+  if (!value || typeof value !== 'object') return null
+  const reason = cleanText(value.reason, 200)
+  const at = cleanIso(value.at)
+  if (!reason && !at) return null
+  return { reason: reason || '内容已失效', at: at || new Date().toISOString() }
+}
+
+/** 正文抓取返回「已删除」这类错误时，直接把条目挂到失效区。 */
+export function markInvalid(id, reason) {
+  return updateItem(id, { invalid: { reason: String(reason || '内容已失效').slice(0, 200), at: new Date().toISOString() } })
+}
+
+export function clearInvalid(id) {
+  return updateItem(id, { invalid: null })
+}
+
 function autoTitle(url, text, kind) {
   if (url) {
     try {
@@ -427,6 +449,7 @@ export function normalizeItem(input = {}, options = {}) {
     archivedAt: cleanIso(source.archivedAt),
     snoozedUntil: cleanIso(source.snoozedUntil),
     ai: normalizeAi(aiSource),
+    invalid: normalizeInvalid(source.invalid),
     content: source.content && typeof source.content === 'object' ? source.content : null,
     libraryPushedAt: cleanIso(source.libraryPushedAt),
     libraryItemId: cleanText(source.libraryItemId, 120) || null,
@@ -516,6 +539,7 @@ const PATCH_FIELDS = [
   'progress',
   'notes',
   'status',
+  'invalid',
   'snoozedUntil',
 ]
 
@@ -627,6 +651,9 @@ export function updateItem(id, patch = {}) {
           }
         }
         break
+      case 'invalid':
+        item.invalid = normalizeInvalid(value)
+        break
       case 'snoozedUntil':
         item.snoozedUntil = cleanIso(value)
         break
@@ -668,6 +695,7 @@ export function setSettings(patch = {}) {
   if ('inboxEnabled' in patch) next.inboxEnabled = Boolean(patch.inboxEnabled)
   if ('dedupeClusters' in patch) next.dedupeClusters = Boolean(patch.dedupeClusters)
   if ('retentionDays' in patch) next.retentionDays = clampInt(patch.retentionDays, 1, 3650, next.retentionDays)
+  if ('invalidSweptAt' in patch) next.invalidSweptAt = cleanIso(patch.invalidSweptAt)
   state.settings = next
   saveState(state)
   return { ...next }
@@ -711,6 +739,13 @@ export function setItemContent(id, content) {
   const item = state.items.find((row) => row.id === id)
   if (!item) return null
   item.content = content && typeof content === 'object' ? content : null
+  const contentError = content && typeof content === 'object' ? String(content.error || '') : ''
+  if (contentError && DEAD_PATTERN.test(contentError)) {
+    item.invalid = { reason: contentError.slice(0, 200), at: new Date().toISOString() }
+  } else if (contentError === '' && content && Array.isArray(content.images) && content.images.length > 0 && item.invalid) {
+    // 内容又抓到了，说明失效判定是误杀
+    item.invalid = null
+  }
   item.updatedAt = new Date().toISOString()
   saveState(state)
   return item
@@ -993,7 +1028,11 @@ export function buildSnapshot(options = {}) {
     }
   }
 
-  const visible = views.filter((view) => !hiddenIds.has(view.id))
+  // 失效条目（笔记被删 / 链接挂了）单独一区，不混进今日/收件箱/资料库
+  const invalidViews = views
+    .filter((view) => view.invalid && typeof view.invalid === 'object')
+    .sort((a, b) => String(b.invalid.at || '').localeCompare(String(a.invalid.at || '')))
+  const visible = views.filter((view) => !hiddenIds.has(view.id) && !(view.invalid && typeof view.invalid === 'object'))
   const active = visible.filter((view) => view.status === 'inbox' || view.status === 'queued' || view.status === 'doing')
   const doneRecent = visible.filter((view) => {
     if (view.status !== 'done') return false
@@ -1043,7 +1082,9 @@ export function buildSnapshot(options = {}) {
       note: DEFAULT_SYNC_STATE.douyin.note,
     },
   }
-  const counts = countDerived(views)
+  const counts = countDerived(visible)
+  counts.total = views.length
+  counts.invalid = invalidViews.length
   counts.duplicates = hiddenIds.size
   const accounts = {
     bilibili: { configured: Boolean(cookie.bilibili), account: syncState.bilibili.account || null },
@@ -1051,6 +1092,7 @@ export function buildSnapshot(options = {}) {
     xiaohongshu: { configured: Boolean(cookie.xiaohongshu), account: null },
   }
   return {
+    invalidItems: invalidViews,
     accounts,
     generatedAt: new Date(nowMs).toISOString(),
     counts,

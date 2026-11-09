@@ -352,7 +352,7 @@ async function xiaohongshuContent(item) {
     const viaBsk = await fetchWechatHtmlViaBsk(item.url, { timeoutMs: 30000 })
     if (viaBsk.ok && viaBsk.html) {
       note = xhsNoteFromState(parseXiaohongshuState(viaBsk.html), xhsNoteId(item.url))
-      if (!note) lastError = '笔记页里没有笔记数据（可能已删除或需要登录）'
+      if (!note) lastError = "小红书笔记已删除或不可见（404）"
     } else if (viaBsk.error) {
       lastError = viaBsk.error
     }
@@ -527,6 +527,8 @@ export function contentNeedsRetry(content) {
   if (!content || typeof content !== 'object') return true
   const error = String(content.error || '')
   if (!error) return false
+  // 笔记/文章已经被作者删了：再怎么重试都是 404，别每次都开一次浏览器去撞
+  if (/已删除|页面不见了|笔记不存在/i.test(error)) return false
   return /验证页|环境异常|wappoc|微信文章.*拦截|secitptpage/i.test(error)
 }
 

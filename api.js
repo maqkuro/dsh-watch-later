@@ -14,6 +14,8 @@ import {
   deleteItem,
   getItem,
   getItems,
+  markInvalid,
+  clearInvalid,
   findByUrl,
   getSettings,
   setSettings,
@@ -62,6 +64,7 @@ const ROUTES = {
   update: PREFIX + '/update',
   action: PREFIX + '/action',
   remove: PREFIX + '/delete',
+  invalid: PREFIX + '/invalid',
   review: PREFIX + '/ai/review',
   organize: PREFIX + '/ai/organize',
   organizeStatus: PREFIX + '/ai/status',
@@ -335,10 +338,48 @@ async function handleAction(req, res) {
 async function handleDelete(req, res) {
   if (!requireMethod(req, res, ['POST'])) return
   const body = await readRequestBody(req)
+  // 批量删除：{ ids: [...] }（失效 tab 的「删除选中 / 清空全部」都走这里）
+  if (Array.isArray(body.ids) && body.ids.length > 0) {
+    const ids = body.ids.map((id) => String(id || '')).filter(Boolean).slice(0, 2000)
+    let deleted = 0
+    const failed = []
+    for (const id of ids) {
+      try {
+        deleteItem(id)
+        deleted += 1
+      } catch {
+        failed.push(id)
+      }
+    }
+    sendJson(res, 200, { ok: true, deleted, failed: failed.length, ids: ids.slice(0, deleted) })
+    return
+  }
   const id = typeof body.id === 'string' ? body.id : ''
   if (!id) throw new Error('缺少 id')
   deleteItem(id)
   sendJson(res, 200, { ok: true, deleted: true, id })
+}
+
+/** 失效条目：标记 / 取消标记（删除走 /delete 的批量分支）。 */
+async function handleInvalid(req, res) {
+  if (!requireMethod(req, res, ['POST'])) return
+  const body = await readRequestBody(req)
+  const action = body.action === 'clear' ? 'clear' : 'mark'
+  const ids = Array.isArray(body.ids) && body.ids.length > 0
+    ? body.ids.map((id) => String(id || '')).filter(Boolean)
+    : typeof body.id === 'string' && body.id ? [body.id] : []
+  if (ids.length === 0) throw new Error('缺少 id 或 ids')
+  let changed = 0
+  for (const id of ids) {
+    try {
+      if (action === 'clear') clearInvalid(id)
+      else markInvalid(id, body.reason || '手动标记失效')
+      changed += 1
+    } catch {
+      // 条目不存在就跳过
+    }
+  }
+  sendJson(res, 200, { ok: true, action, changed })
 }
 
 async function handleReview(req, res, ctx) {
@@ -1027,6 +1068,7 @@ export function applyRoutes(ctx) {
     [ROUTES.update, guarded((req, res) => handleUpdate(req, res))],
     [ROUTES.action, guarded((req, res) => handleAction(req, res))],
     [ROUTES.remove, guarded((req, res) => handleDelete(req, res))],
+    [ROUTES.invalid, guarded((req, res) => handleInvalid(req, res))],
     [ROUTES.review, guarded((req, res) => handleReview(req, res, ctx))],
     [ROUTES.organize, guarded((req, res) => handleOrganize(req, res, ctx))],
     [ROUTES.organizeStatus, guarded((req, res) => handleOrganizeStatus(req, res))],
