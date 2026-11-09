@@ -46,7 +46,7 @@ import { cancelOrganize, organizeItems, organizeStatus, startOrganize, undoOrgan
 import { resolveContent } from './content.js'
 import { pushImageToLibrary } from './library-push.js'
 import { ingestArchiveZip } from './zip-ingest.js'
-import { backfillCovers, isPlaceholderCover } from './cover-backfill.js'
+import { backfillCovers, isPlaceholderCover, isGeneratedCover } from './cover-backfill.js'
 import { buildClusters } from './cluster.js'
 import { runSync } from './sync-run.js'
 import { fetchAccount as fetchBiliAccount } from './sync/bili.js'
@@ -581,13 +581,25 @@ function handleMedia(req, res) {
   }
   const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml' }
   const bytes = readFileSync(resolved.path)
+  // 扩展名可能是「.jpg 里装 WebP」这种历史遗留（图床按 accept 回 webp），按真实字节定 content-type
+  const sniffed = sniffImageType(bytes)
   res.writeHead(200, {
-    'content-type': types[resolved.ext] || 'application/octet-stream',
+    'content-type': sniffed || types[resolved.ext] || 'application/octet-stream',
     'content-length': bytes.length,
     'cache-control': 'private, max-age=86400',
     etag,
   })
   res.end(req.method === 'HEAD' ? undefined : bytes)
+}
+
+/** 从文件头嗅探图片 MIME；认不出来返回 null，交给扩展名兜底。 */
+function sniffImageType(bytes) {
+  if (!bytes || bytes.length < 12) return null
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png'
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return 'image/gif'
+  if (bytes.slice(0, 4).toString('latin1') === 'RIFF' && bytes.slice(8, 12).toString('latin1') === 'WEBP') return 'image/webp'
+  return null
 }
 
 
@@ -760,8 +772,8 @@ async function handleContent(req, res) {
   const contentImages = Array.isArray(content && content.images) ? content.images.filter(Boolean).slice(0, MAX_IMAGES) : []
   if (contentImages.length > 0) {
     const patch = {}
-    // 平台 logo 占位不算封面，拿到真图就换掉
-    if (!updated.cover || isPlaceholderCover(updated.cover)) patch.cover = contentImages[0]
+    // 生成的标题卡 SVG / 平台 logo 都不算封面，拿到真图就换掉
+    if (!updated.cover || isGeneratedCover(updated.cover) || isPlaceholderCover(updated.cover)) patch.cover = contentImages[0]
     if (!Array.isArray(updated.images) || updated.images.length === 0) patch.images = contentImages
     if (Object.keys(patch).length > 0) {
       try {

@@ -145,3 +145,22 @@ test('extractOgImage 优先取 og:image / twitter:image', () => {
   assert.equal(extractOgImage(html, 'https://mp.weixin.qq.com/s/x'), 'https://mmbiz.qpic.cn/a/b.jpg')
   assert.equal(extractOgImage('<html></html>', 'https://example.com'), null)
 })
+
+test('parseXiaohongshuState 认手机分享页形态（noteData.data.noteData）', async () => {
+  const { xhsNoteFromState } = await import('../content.js')
+  const html =
+    '<html><script>window.__INITIAL_STATE__={"noteData":{"data":{"noteData":{"noteId":"6abb13f4000000001801971a","title":"极简主义｜请扔掉这60件东西","desc":"丢掉这60件东西。","user":{"nickName":"Aura在成长"},"imageList":[{"url":"http://sns-webpic-qc.xhscdn.com/a/1.jpg"},{"url":"http://sns-webpic-qc.xhscdn.com/a/2.jpg"}],"tagList":[{"name":"极简生活"}]}}},"normalNotePreloadData":{}}</script></html>'
+  const state = parseXiaohongshuState(html)
+  assert.ok(state)
+  const note = xhsNoteFromState(state, '6abb13f4000000001801971a')
+  assert.ok(note)
+  assert.equal(note.title, '极简主义｜请扔掉这60件东西')
+  assert.equal(note.imageList.length, 2)
+})
+
+test('parseXiaohongshuState 能切出带括号字符串的很长 JSON', () => {
+  const desc = '正文里有 } 和 { 括号，还有 "引号" 转义 \\ 反斜杠'
+  const html = `<html><script>window.__INITIAL_STATE__=${JSON.stringify({ noteData: { data: { noteData: { noteId: 'n1', desc, imageList: [{ url: 'http://x/1.jpg' }] } } } })};window.x=1</script></html>`
+  const state = parseXiaohongshuState(html)
+  assert.equal(state.noteData.data.noteData.desc, desc)
+})

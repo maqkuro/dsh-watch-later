@@ -71,7 +71,7 @@ function coverNeedsWork(cover) {
   return isPlaceholderCover(cover)
 }
 
-function isGeneratedCover(cover) {
+export function isGeneratedCover(cover) {
   return typeof cover === 'string' && /\.svg(\?|$)/i.test(cover)
 }
 
@@ -93,7 +93,8 @@ export async function backfillCovers(options = {}) {
   const includeAll = options.includeAll === true
   const idSet =
     Array.isArray(options.ids) && options.ids.length > 0 ? new Set(options.ids.map((id) => String(id))) : null
-  const delayMs = Number.isFinite(Number(options.delayMs)) ? Math.max(0, Number(options.delayMs)) : 250
+  const delayGiven = Number.isFinite(Number(options.delayMs))
+  const delayMs = delayGiven ? Math.max(0, Number(options.delayMs)) : 250
   const summary = { checked: 0, covered: 0, skipped: 0, failed: 0, results: [] }
   if (limit === 0) return summary
 
@@ -105,9 +106,17 @@ export async function backfillCovers(options = {}) {
     .slice(0, idSet ? Math.max(limit, idSet.size) : limit)
 
   let sogouBlocked = false
+  // 小红书按 IP 做风控：连续撞到 sec_404 就停手，本轮剩下的 xhs 留到下一轮再补，
+  // 每条约 6 秒（主人 2026-11-09 反馈「小红书全都没封面」，慢一点才不会整批被拦）。
+  let xhsBlocked = 0
+  let xhsRestBlocked = false
   for (const item of pending) {
     summary.checked += 1
     let covered = false
+    if (item.kind === 'xhs' && xhsRestBlocked) {
+      summary.skipped += 1
+      continue
+    }
 
     // 1) 微信文章：搜狗搜索拿真实缩略图 + 摘要（正文被验证页拦住也能补）
     if (useSogou && !sogouBlocked && item.kind === 'wechat' && (force || shouldTrySogou(item))) {
@@ -154,6 +163,16 @@ export async function backfillCovers(options = {}) {
       }
     }
 
+    // 小红书被风控：记账并在连续两次之后停手，避免把整批条目都撞成 404
+    if (item.kind === 'xhs' && !covered) {
+      const latestForXhs = getItem(item.id) || item
+      const errText = String((latestForXhs.content && latestForXhs.content.error) || '')
+      if (/sec_404|风控/.test(errText)) {
+        xhsBlocked += 1
+        if (xhsBlocked >= 2) xhsRestBlocked = true
+      }
+    }
+
     // 3) 站点 favicon（仅链接类，且还没有封面或只有生成封面时不覆盖已有真封面）
     const latest = getItem(item.id) || item
     if (coverNeedsWork(latest.cover)) {
@@ -193,7 +212,8 @@ export async function backfillCovers(options = {}) {
       summary.skipped += 1
     }
 
-    if (delayMs > 0) await new Promise((wait) => setTimeout(wait, delayMs))
+    const waitMs = item.kind === 'xhs' && !delayGiven ? Math.max(delayMs, 6000) : delayMs
+    if (waitMs > 0) await new Promise((wait) => setTimeout(wait, waitMs))
   }
   return summary
 }

@@ -10,7 +10,7 @@
  * 结果是纯数据（Content），缓存到 item.content 由调用方负责；这里不做存储。
  * 所有网络失败都降级为 { error }，不抛异常。
  */
-import { request, UA } from './sync/http.js'
+import { request, UA, MOBILE_UA } from './sync/http.js'
 import { getCookie, saveMediaBytes, MAX_IMAGES as MAX_ITEM_IMAGES } from './store.js'
 import { fetchPageViaBrowser } from './login/chrome-login.js'
 import { fetchWechatHtmlViaBsk } from './wechat.js'
@@ -162,9 +162,9 @@ export function extractArticleText(html, kind) {
   return best.slice(0, MAX_TEXT)
 }
 
-async function fetchPage(url, cookie) {
+async function fetchPage(url, cookie, ua) {
   const headers = {
-    'user-agent': UA,
+    'user-agent': ua || UA,
     accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
     'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
     referer: new URL(url).origin + '/',
@@ -267,29 +267,88 @@ async function douyinContent(item) {
   }
 }
 
+/** 小红书的 sec 风控会 302 到 /404/sec_*；这种页面不是「笔记不存在」，退避后可以重试。 */
+export function isXhsBlockedPage(html, finalUrl) {
+  const url = String(finalUrl || '')
+  if (/\/404\/sec_|\/website-login\/|\/captcha/i.test(url)) return true
+  const source = String(html || '')
+  if (/noteData\.data\.noteData|noteDetailMap/.test(source)) return false
+  return /xhs_sec_server|notFoundPage/.test(source)
+}
+
 function xhsNoteId(url) {
   const match = /(?:explore|discovery\/item|note)\/([0-9a-zA-Z]+)/.exec(String(url || ''))
   return match ? match[1] : null
 }
 
+/** 从 text[start] 起按括号配对切出第一段完整 JSON（跳过字符串里的括号），比非贪婪正则可靠。 */
+function sliceBalancedObject(text, start) {
+  let i = start
+  while (i < text.length && text[i] !== '{') {
+    if (!/\s/.test(text[i])) return null
+    i += 1
+  }
+  if (i >= text.length) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let j = i; j < text.length; j += 1) {
+    const ch = text[j]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth += 1
+    } else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) return text.slice(i, j + 1)
+    }
+  }
+  return null
+}
+
 export function parseXiaohongshuState(html) {
   const source = String(html || '')
-  const match = /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*?\})\s*<\/script>/i.exec(source) || /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]*\})/i.exec(source)
-  if (!match) return null
-  let text = match[1].replace(/\bundefined\b/g, 'null')
+  const marker = /window\.__INITIAL_STATE__\s*=\s*/i.exec(source)
+  if (!marker) return null
+  const raw = sliceBalancedObject(source, marker.index + marker[0].length)
+  if (!raw) return null
   try {
-    return JSON.parse(text)
+    return JSON.parse(raw.replace(/\bundefined\b/g, 'null'))
   } catch {
     return null
   }
 }
 
-function xhsNoteFromState(state, noteId) {
-  const map = state && state.note && state.note.noteDetailMap
-  if (!map || typeof map !== 'object') return null
-  if (noteId && map[noteId] && map[noteId].note) return map[noteId].note
-  for (const key of Object.keys(map)) {
-    if (map[key] && map[key].note) return map[key].note
+/**
+ * 从小红书两种页面形态里取笔记本体：
+ *   1. PC 版（需要登录态）：state.note.noteDetailMap[<noteId>].note
+ *   2. 手机分享页（免登录）：state.noteData.data.noteData —— 标题 / desc / imageList / user 都在这里
+ * 原因：同一个分享链接给 PC UA 只返回首页（没有笔记数据），给手机 UA 才会带 noteData。
+ */
+export function xhsNoteFromState(state, noteId) {
+  if (!state || typeof state !== 'object') return null
+  const map = state.note && state.note.noteDetailMap
+  if (map && typeof map === 'object') {
+    if (noteId && map[noteId] && map[noteId].note) return map[noteId].note
+    for (const key of Object.keys(map)) {
+      if (map[key] && map[key].note) return map[key].note
+    }
+  }
+  const mobile = state.noteData && state.noteData.data && state.noteData.data.noteData
+  if (mobile && typeof mobile === 'object') {
+    const id = String(mobile.noteId || '')
+    const usable = Boolean(mobile.imageList || mobile.desc || mobile.title)
+    if (usable && (!noteId || !id || id === noteId)) return mobile
+  }
+  const preload = state.noteData && state.noteData.normalNotePreloadData
+  if (preload && typeof preload === 'object' && (preload.imagesList || preload.desc || preload.title)) {
+    return { title: preload.title, desc: preload.desc, imageList: preload.imagesList, user: preload.user }
   }
   return null
 }
@@ -298,11 +357,16 @@ function xhsImages(note) {
   const urls = []
   const push = (value) => {
     if (typeof value !== 'string') return
-    const url = value.startsWith('//') ? 'https:' + value : value
+    let url = value.startsWith('//') ? 'https:' + value : value
     if (!/^https?:\/\//i.test(url)) return
     if (!urls.includes(url)) urls.push(url)
   }
-  for (const image of Array.isArray(note && note.imageList) ? note.imageList : []) {
+  const list = Array.isArray(note && note.imageList) ? note.imageList : []
+  for (const image of list) {
+    if (typeof image === 'string') {
+      push(image)
+      continue
+    }
     if (!image || typeof image !== 'object') continue
     push(image.urlDefault)
     push(image.urlPre)
@@ -310,10 +374,31 @@ function xhsImages(note) {
     for (const info of Array.isArray(image.infoList) ? image.infoList : []) push(info && info.url)
     if (urls.length >= MAX_IMAGES) break
   }
+  // 极少数笔记只有 cover（图集为空 / 视频笔记），也拿它当封面
+  const cover = note && note.cover
+  if (urls.length === 0 && cover && typeof cover === 'object') {
+    push(cover.urlDefault)
+    push(cover.urlPre)
+    push(cover.url)
+  }
   return urls.slice(0, MAX_IMAGES)
 }
 
 const MAX_XHS_IMAGES = 9
+
+/**
+ * 按真实字节判断图片格式。小红书图床的 URL 一律写 `!h5_1080jpg`，但回包常常是 WebP
+ * （accept 里带 image/webp 就给 webp），按扩展名存会得到「.jpg 里装 WebP」——
+ * 浏览器渲染/后续转码都容易踩坑，所以这里嗅探文件头。
+ */
+function sniffImageExtension(bytes) {
+  if (!bytes || bytes.length < 12) return '.jpg'
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return '.jpg'
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return '.png'
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return '.gif'
+  if (bytes.slice(0, 4).toString('latin1') === 'RIFF' && bytes.slice(8, 12).toString('latin1') === 'WEBP') return '.webp'
+  return '.jpg'
+}
 
 /** 把小红书图床图片落到本地媒体库（外链在面板里常被防盗链）。 */
 async function mirrorRemoteImages(urls) {
@@ -322,7 +407,7 @@ async function mirrorRemoteImages(urls) {
     try {
       const response = await request(url, {
         headers: {
-          'user-agent': UA,
+          'user-agent': MOBILE_UA,
           referer: 'https://www.xiaohongshu.com/',
           accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
         },
@@ -331,8 +416,7 @@ async function mirrorRemoteImages(urls) {
       if (!response.ok) continue
       const bytes = await response.bytes()
       if (!bytes || bytes.length < 512) continue
-      const extension = /\.png(\?|$)/i.test(url) ? '.png' : /\.webp(\?|$)/i.test(url) ? '.webp' : '.jpg'
-      const media = saveMediaBytes(bytes, extension)
+      const media = saveMediaBytes(bytes, sniffImageExtension(bytes))
       if (media && media.url) local.push(media.url)
     } catch {
       // 单张失败就跳过
@@ -343,21 +427,44 @@ async function mirrorRemoteImages(urls) {
 
 async function xiaohongshuContent(item) {
   const cookie = getCookie('xiaohongshu')
+  const noteId = xhsNoteId(item.url)
   let note = null
   let lastError = null
+  let blocked = false
+  let ogImage = null
 
-  // 1) 主人已登录的 Chrome（BrowserSkill）：小红书对 Node fetch / 无头浏览器按登录态+指纹拦截，
-  //    只有真人会话能拿到页面里的 __INITIAL_STATE__（真图 + 正文）。实测 1-2 秒/条。
+  // 0) 手机 UA 直取分享页：同一链接 PC UA 只会拿到首页（没有笔记数据），手机 UA 会带上
+  //    noteData.data.noteData（标题 / 正文 / imageList 图集），免登录，1 秒内返回。
   try {
-    const viaBsk = await fetchWechatHtmlViaBsk(item.url, { timeoutMs: 30000 })
-    if (viaBsk.ok && viaBsk.html) {
-      note = xhsNoteFromState(parseXiaohongshuState(viaBsk.html), xhsNoteId(item.url))
-      if (!note) lastError = "小红书笔记已删除或不可见（404）"
-    } else if (viaBsk.error) {
-      lastError = viaBsk.error
+    const mobilePage = await fetchPage(item.url, cookie || undefined, MOBILE_UA)
+    note = xhsNoteFromState(parseXiaohongshuState(mobilePage.html), noteId)
+    if (!note) {
+      if (isXhsBlockedPage(mobilePage.html, mobilePage.finalUrl)) {
+        blocked = true
+        lastError = '小红书风控拦截（sec_404），自动退避后重试'
+      } else {
+        lastError = '手机分享页没有笔记数据'
+        ogImage = extractOgImage(mobilePage.html, item.url)
+      }
     }
   } catch (error) {
     lastError = String(error?.message || error)
+  }
+
+  // 1) 主人已登录的 Chrome（BrowserSkill）：小红书对 Node fetch / 无头浏览器按登录态+指纹拦截，
+  //    只有真人会话能拿到页面里的 __INITIAL_STATE__（真图 + 正文）。实测 1-2 秒/条。
+  if (!note) {
+    try {
+      const viaBsk = await fetchWechatHtmlViaBsk(item.url, { timeoutMs: 30000 })
+      if (viaBsk.ok && viaBsk.html) {
+        note = xhsNoteFromState(parseXiaohongshuState(viaBsk.html), noteId)
+        if (!note) lastError = '小红书笔记已删除或不可见（404）'
+      } else if (viaBsk.error) {
+        lastError = lastError || viaBsk.error
+      }
+    } catch (error) {
+      lastError = lastError || String(error?.message || error)
+    }
   }
 
   // 2) 无头 Chrome 兜底
@@ -384,19 +491,23 @@ async function xiaohongshuContent(item) {
   }
 
   if (!note) {
+    const fallbackImages = ogImage ? await mirrorRemoteImages([ogImage]) : []
     return {
       ...emptyContent('page'),
       text: item.summary || null,
+      images: fallbackImages.length > 0 ? fallbackImages : ogImage ? [ogImage] : [],
       error:
         (lastError ? '小红书正文抓取失败：' + lastError + '；' : '') +
-        '可以点「打开原文」查看，或在右上角「登录授权」登录后重试',
+        (blocked
+          ? '小红书风控拦截，稍后自动重试'
+          : '可以点「打开原文」查看，或在右上角「登录授权」登录后重试'),
     }
   }
 
   const parts = []
   if (note.title) parts.push(String(note.title).trim())
   if (note.desc) parts.push(String(note.desc).trim())
-  const nickname = note.user && note.user.nickname ? String(note.user.nickname) : null
+  const nickname = note.user ? String(note.user.nickname || note.user.nickName || '').trim() || null : null
   if (nickname) parts.push('作者：' + nickname)
   if (Array.isArray(note.tagList)) {
     const tags = note.tagList.map((tag) => (tag && tag.name) || '').filter(Boolean).slice(0, 6)
@@ -529,7 +640,7 @@ export function contentNeedsRetry(content) {
   if (!error) return false
   // 笔记/文章已经被作者删了：再怎么重试都是 404，别每次都开一次浏览器去撞
   if (/已删除|页面不见了|笔记不存在/i.test(error)) return false
-  return /验证页|环境异常|wappoc|微信文章.*拦截|secitptpage/i.test(error)
+  return /验证页|环境异常|wappoc|微信文章.*拦截|secitptpage|sec_404|风控/i.test(error)
 }
 
 /**

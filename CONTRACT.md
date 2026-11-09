@@ -458,7 +458,9 @@ Content（也存进 item.content 缓存，`refresh=1` 强制重抓，默认缓�
 - image 条目：type=image，images=[cover]；
 - bilibili：调用公开 view 接口补 title/cover/desc + embedUrl；抖音：type=video，embedUrl=null（无公开播放器）；
 - wechat/article/page/link：抓取 HTML 提取正文纯文本（≤20000 字）+ 内容图；失败返回 error，不抛；
-- xhs：通常 403，返回 error=「小红书不支持直接抓正文，请点开原文」。
+- xhs：先用**手机 UA** 直取分享页（PC UA 只会拿到首页），解析 `noteData.data.noteData`
+  （title/desc/imageList/tagList/user.nickName）；再依次兜底 bsk 真浏览器、无头 Chrome、PC cookie 抓取。
+  撞到 `/404/sec_*` 风控页时返回 error 含「风控」字样（可重试），并只取 `og:image` 作图。
 - 抓取超时 12s，不阻塞其它接口。
 
 ### 13.2 相似内容聚类与归纳
@@ -533,9 +535,9 @@ UI 契约（ui-builder）：
   判定 `web_session` 或 `a1`，cookie 域 xiaohongshu.com）。
   `POST /login/chrome/start|poll|cancel { provider }` 三个接口已泛化。
 - 新增 `POST /login/logout` `{ provider }` → 清掉该平台 cookie 与账号状态，返回 `{ ok, accounts }`。
-- 内容直读：小红书条目在已登录时用 cookie 抓页面并解析 `window.__INITIAL_STATE__`
-  （note.noteDetailMap → note.title/desc/imageList/tagList/user.nickname）；未登录返回
-  error「小红书需要登录才能看：点面板右上角「登录授权」授权后重试」。
+- 内容直读：小红书优先用手机 UA 抓分享页并解析 `window.__INITIAL_STATE__`，两种形态都认：
+  PC 版 `note.noteDetailMap[<id>].note`、手机版 `noteData.data.noteData`（title/desc/imageList/tagList/user）。
+  图集落本地媒体库（按文件头判真实格式，图床常把 WebP 塞进 `.jpg` URL）；被 sec 风控时退避重试。
 
 ### 15.2 UI（ui-builder）
 
