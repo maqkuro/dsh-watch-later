@@ -76,14 +76,14 @@ async function withFetch(handler, fn) {
  * 所以同步时会把它存进 sync.stats.aid。测试默认给一条带 aid 的条目（模拟正常同步结果），
  * 传 aid:null 可以模拟"老条目没存 aid、需要走 view 接口实时解析"的情况。
  */
-function biliItem(remoteId, title, aid = 710350011) {
+function biliItem(remoteId, title, aid = 710350011, cid = 62131, durationSec = 600) {
   return store.addItem(
     {
       title: title || 'B站视频 ' + remoteId,
       url: 'https://www.bilibili.com/video/' + remoteId,
       kind: 'bilibili',
       site: 'B站',
-      sync: { provider: 'bilibili', remoteId, stats: { aid } },
+      sync: { provider: 'bilibili', remoteId, stats: { aid, cid, durationSec } },
     },
     { dedupe: true },
   ).item
@@ -468,7 +468,7 @@ function apiCall(routes, method, path, body) {
   return done
 }
 
-test('API：/action done 对 B站条目写回移出，但本地保留且不写墓碑', async () => {
+test('API：/action done 上报观看进度（B站标已看），不是移出，本地保留且不写墓碑', async () => {
   const { routes, ROUTES } = await makeApi()
   store.setCookie('bilibili', GOOD_COOKIE)
   const item = biliItem('BV1xx411c7mE', '已读要写回')
@@ -478,11 +478,18 @@ test('API：/action done 对 B站条目写回移出，但本地保留且不写�
     async (stub) => {
       const res = await apiCall(routes, 'POST', ROUTES.action, { id: item.id, action: 'done' })
       assert.equal(res.status, 200)
-      assert.equal(res.body.remote && res.body.remote.ok, true, '已读应该触发远端移出')
+      assert.equal(res.body.remote && res.body.remote.ok, true, '已读应该触发上报进度')
+
       const delCalls = stub.calls.filter((c) => c.url.includes('toview/del'))
-      assert.equal(delCalls.length, 1)
-      const form = new URLSearchParams(String(delCalls[0].init.body))
+      assert.equal(delCalls.length, 0, '已读绝不能用 toview/del 移出，那是「移除」的语义')
+
+      const reportCalls = stub.calls.filter((c) => c.url.includes('/x/v2/history/report'))
+      assert.equal(reportCalls.length, 1, '应该调用上报观看进度接口')
+      const form = new URLSearchParams(String(reportCalls[0].init.body))
       assert.equal(form.get('aid'), '710350011')
+      assert.equal(form.get('cid'), '62131')
+      assert.equal(form.get('progress'), '600', 'progress 要报成片长，B站才会判成已看完')
+      assert.equal(form.get('csrf'), 'csrf-token')
     },
   )
 
@@ -539,4 +546,38 @@ test('removeRemoteOnly：不支持写回的来源返回 unsupported，不抛异�
   assert.equal(outcome.ok, false)
   assert.equal(outcome.unsupported, true)
   assert.match(outcome.error, /抖音/)
+})
+
+test('reportWatched：POST /x/v2/history/report，progress 报成片长；缺 cid 快速失败', async () => {
+  const { reportWatched } = bili
+
+  await withFetch(
+    () => ({ body: { code: 0 } }),
+    async (stub) => {
+      const ok = await reportWatched({ cookie: GOOD_COOKIE, aid: 710350011, cid: 62131, progress: 600 })
+      assert.equal(ok.ok, true)
+      assert.equal(stub.calls.length, 1)
+      const call = stub.calls[0]
+      assert.match(call.url, /\/x\/v2\/history\/report$/)
+      assert.equal(String(call.init.method).toUpperCase(), 'POST')
+      const form = new URLSearchParams(String(call.init.body))
+      assert.equal(form.get('aid'), '710350011')
+      assert.equal(form.get('cid'), '62131')
+      assert.equal(form.get('progress'), '600')
+      assert.equal(form.get('csrf'), 'csrf-token')
+      assert.equal(form.get('platform'), 'android')
+      assert.match(call.init.headers.Cookie, /SESSDATA=sess-value/)
+    },
+  )
+
+  // 缺 cid 时不该发请求（B站这个接口 cid 必填）
+  await withFetch(
+    () => ({ body: { code: 0 } }),
+    async (stub) => {
+      const bad = await reportWatched({ cookie: GOOD_COOKIE, aid: 1, cid: null, progress: 10 })
+      assert.equal(bad.ok, false)
+      assert.match(bad.error, /cid/)
+      assert.equal(stub.calls.length, 0, '缺 cid 不能发请求')
+    },
+  )
 })

@@ -49,7 +49,7 @@ import { ingestArchiveZip } from './zip-ingest.js'
 import { backfillCovers, isPlaceholderCover, isGeneratedCover } from './cover-backfill.js'
 import { buildClusters } from './cluster.js'
 import { runSync } from './sync-run.js'
-import { removeItems, removeRemoteOnly } from './remove.js'
+import { removeItems, removeRemoteOnly, markRemoteWatched } from './remove.js'
 import { fetchAccount as fetchBiliAccount } from './sync/bili.js'
 import { parseShareText, resolveShareUrl } from './sync/douyin.js'
 
@@ -333,10 +333,10 @@ async function handleAction(req, res) {
   let remote = null
   if (action === 'done') {
     patch.status = 'done'
-    // 已读也要写回：B站没有"标记已读"接口，移出稍后再看是唯一能表达"看完了"的动作。
+    // 已读写回 = 上报观看进度（B站据此显示「已看完」），**不是**从稍后再看移出。
     // 本地条目保留（不删除、不写墓碑），失败也不阻断本地标记。
     try {
-      remote = await removeRemoteOnly(getItem(id))
+      remote = await markRemoteWatched(getItem(id))
     } catch (err) {
       remote = { provider: '', ok: false, unsupported: false, error: (err && err.message) || String(err) }
     }

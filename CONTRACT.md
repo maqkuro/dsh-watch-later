@@ -1030,17 +1030,25 @@ else if (contentError && DEAD_PATTERN.test(contentError)) item.invalid = { reaso
 2. 同步以前是纯单向（平台 → 本地），本地删了下次同步还会复活；主人要求**移除要写回平台**。
 3. 主人追加：**已读状态也要同步**。
 
-### 平台能力边界
-| 平台 | 移出稍后再看 | 标记已读 |
+### 平台能力边界（2026-11-09 更正）
+| 平台 | 移除 | 标记已读 |
 |---|---|---|
-| B站 | ✅ `POST /x/v2/history/toview/del`（Cookie + csrf=`bili_jct`） | ❌ 无此接口 |
-| 抖音 | ❌ 缺 `a_bogus` 签名，未实现 | ❌ |
+| B站 | ✅ `POST /x/v2/history/toview/del`（Cookie + csrf=`bili_jct`） | ✅ `POST /x/v2/history/report`（aid+cid+progress+csrf） |
+| 抖音 | ❌ 缺 `a_bogus` 签名 | ❌ |
 
-所以「已读」在平台侧只能表达为**移出**；抖音两边都做不到，只在本地标记。
+**§28 初版写错过一次**：当时误判「B站没有标记已读的接口」，把已读也实现成 toview/del 移出。
+实际 B站稍后再看的「已看」是由**观看进度**推导的：`/x/v2/history/report` 把 `progress`
+报成片长，该视频就会显示「已看完」但**仍留在稍后再看列表里**。两者语义完全不同，必须分开：
+
+- **已读 `done`** → 上报观看进度（progress = 片长），条目留在 B站列表
+- **移除 `remove`** → `toview/del` 从 B站列表删掉
+
+`cid` 是上报进度的必填参数：同步时若没存，改用 `/x/web-interface/view` 的 `data.cid`
+（单 P）或 `data.pages[0].cid`（多 P）解析。
 
 ### 语义（本地）
-- **已读 `done`**：平台移出 + **本地保留** status='done'，**不写墓碑**
-- **移除 `remove`**：平台移出 + **本地删除** + 写墓碑
+- **已读 `done`**：上报进度 + **本地保留** status='done'，**不写墓碑**
+- **移除 `remove`**：`toview/del` + **本地删除** + 写墓碑
 
 ### aid 换算（关键坑）
 `toview/del` 只认数字 `aid`，而同步存的是 `bvid`。**不能用 `bvidToAid` 纯算法反推**：

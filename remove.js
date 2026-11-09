@@ -16,7 +16,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { DATA_DIR, deleteItem, getCookie, getItem } from './store.js'
-import { removeFromWatchLater, resolveAidByBvid } from './sync/bili.js'
+import { removeFromWatchLater, reportWatched, resolveAidByBvid } from './sync/bili.js'
 
 export const REMOVED_REMOTE_FILE = join(DATA_DIR, 'removed-remote.json')
 
@@ -76,15 +76,65 @@ export function isRemoteRemoved(provider, remoteId) {
  * 拿错 aid 去删只会静默失败——本地没了、B站还在。
  */
 async function resolveBiliAid(item, signal) {
-  const cached = Number(item && item.sync && item.sync.stats && item.sync.stats.aid)
-  if (Number.isFinite(cached) && cached > 0) return { aid: cached, error: null }
-
+  const stats = (item && item.sync && item.sync.stats) || {}
   const remoteId = String((item && item.sync && item.sync.remoteId) || '').trim()
-  if (!remoteId) return { aid: null, error: '条目缺少 B站视频标识' }
-  if (/^\d+$/.test(remoteId)) return { aid: Number(remoteId), error: null }
-  if (/^av\d+$/i.test(remoteId)) return { aid: Number(remoteId.slice(2)), error: null }
+
+  // view 接口能一次拿到 aid + cid + duration；只有拿到 aid 后缺 cid 时才值得去查
+  const cachedAid = Number(stats.aid)
+  const cachedCid = Number(stats.cid)
+  const cachedDuration = Number(stats.durationSec)
+
+  if (Number.isFinite(cachedAid) && cachedAid > 0) {
+    return {
+      aid: cachedAid,
+      cid: Number.isFinite(cachedCid) && cachedCid > 0 ? cachedCid : null,
+      duration: Number.isFinite(cachedDuration) && cachedDuration > 0 ? cachedDuration : null,
+      error: null,
+    }
+  }
+  if (!remoteId) return { aid: null, cid: null, duration: null, error: '条目缺少 B站视频标识' }
+  if (/^\d+$/.test(remoteId)) {
+    return { aid: Number(remoteId), cid: cachedCid || null, duration: cachedDuration || null, error: null }
+  }
+  if (/^av\d+$/i.test(remoteId)) {
+    return { aid: Number(remoteId.slice(2)), cid: cachedCid || null, duration: cachedDuration || null, error: null }
+  }
 
   return resolveAidByBvid(remoteId, { signal })
+}
+
+
+/**
+ * 把条目在平台侧标记为「已看」——**不动稍后再看列表**，只上报观看进度。
+ *
+ * 和移除的区别：
+ *   - 已读：POST /x/v2/history/report 把 progress 报成片长，B站稍后再看显示「已看完」，条目仍在列表里
+ *   - 移除：POST /x/v2/history/toview/del 直接从稍后再看删掉
+ *
+ * @returns {Promise<{ provider:string, ok:boolean, unsupported:boolean, error:string|null }>}
+ */
+export async function markRemoteWatched(item, options = {}) {
+  const provider = item && item.sync && item.sync.provider ? String(item.sync.provider) : ''
+  if (!provider) return { provider: '', ok: true, unsupported: false, error: null }
+  if (provider === 'douyin') {
+    return { provider, ok: false, unsupported: true, error: '抖音不支持写回（缺接口签名），已读只在本地生效' }
+  }
+  if (provider !== 'bilibili') {
+    return { provider, ok: false, unsupported: true, error: '该来源不支持写回' }
+  }
+
+  const resolved = await resolveBiliAid(item, options.signal)
+  if (!resolved.aid) {
+    return { provider, ok: false, unsupported: false, error: resolved.error || '解析 B站 aid 失败' }
+  }
+  if (!resolved.cid) {
+    return { provider, ok: false, unsupported: false, error: '解析不到 cid（B站上报进度需要），稍后重试' }
+  }
+  const seconds = resolved.duration || 1
+  const cookie = getCookie('bilibili')
+  const outcome = await reportWatched({ cookie, aid: resolved.aid, cid: resolved.cid, progress: seconds, signal: options.signal })
+  if (outcome && outcome.ok) return { provider, ok: true, unsupported: false, error: null }
+  return { provider, ok: false, unsupported: false, error: (outcome && outcome.error) || 'B站标记已看失败' }
 }
 
 /**
@@ -181,4 +231,4 @@ export async function removeItems(ids, options = {}) {
   return result
 }
 
-export default { removeItems, removeRemoteOnly, isRemoteRemoved, markRemoteRemoved, REMOVED_REMOTE_FILE }
+export default { removeItems, removeRemoteOnly, markRemoteWatched, isRemoteRemoved, markRemoteRemoved, REMOVED_REMOTE_FILE }

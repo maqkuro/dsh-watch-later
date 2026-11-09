@@ -23,6 +23,8 @@ const NAV_URL = `${API_BASE}/x/web-interface/nav`
 const TOVIEW_URL = `${API_BASE}/x/v2/history/toview`
 /** 公开视频信息（用来 bvid -> aid，写回删除时需要）。 */
 const BVID_VIEW_URL = `${API_BASE}/x/web-interface/view`
+/** 上报观看进度：B站据此判断「已看」。 */
+const REPORT_URL = `${API_BASE}/x/v2/history/report`
 /** 从「稍后再看」移除（写回）：POST form，aid 支持逗号分隔多个，csrf 取 Cookie 里的 bili_jct。 */
 const TOVIEW_DEL_URL = `${API_BASE}/x/v2/history/toview/del`
 const REFERER = 'https://www.bilibili.com/'
@@ -416,7 +418,77 @@ export async function resolveAidByBvid(bvid, { signal } = {}) {
     }
   }
   const aid = toPositiveNumber(payload.data.aid)
-  return aid ? { aid, error: null } : { aid: null, error: 'B站 view 接口没有 aid 字段' }
+  if (!aid) return { aid: null, cid: null, duration: null, error: 'B站 view 接口没有 aid 字段' }
+  // cid 是「上报观看进度」的必填参数；单 P 视频取 data.cid，多 P 取第一 P
+  const pages = Array.isArray(payload.data.pages) ? payload.data.pages : []
+  const cid = toPositiveNumber(payload.data.cid) || toPositiveNumber(pages[0] && pages[0].cid)
+  const duration = toPositiveNumber(payload.data.duration) || toPositiveNumber(payload.data.duration)
+  return { aid, cid, duration, error: null }
+}
+
+/**
+ * 上报观看进度 —— B站侧「已读」的唯一表达方式。
+ *
+ * 背景：稍后再看没有"标记已读"的写接口，B站是根据观看进度判断「已看」的
+ * （toview 列表里每条都带 progress 字段）。所以把 progress 报成片长，
+ * 这条视频在 B站稍后再看里就会显示为已看完，而**不会从列表消失**——
+ * 这正是「已读」和「移除」在平台侧的区别：已读=标记，移除=toview/del 删掉。
+ *
+ * 接口：POST /x/v2/history/report，form: aid/cid/progress/csrf/platform
+ * 认证：Cookie(SESSDATA) + csrf(=Cookie 里的 bili_jct)
+ *
+ * @param {{ cookie?:string, aid:number, cid:number, progress:number, signal?:AbortSignal }} options
+ * @returns {Promise<{ ok:boolean, error:string|null }>}
+ */
+export async function reportWatched({ cookie, aid, cid, progress, signal } = {}) {
+  const cookieHeader = buildCookieHeader(cookie)
+  const csrf = parseBiliCsrf(cookieHeader)
+  if (!cookieHeader) return { ok: false, error: '没有配置 B站 Cookie，无法标记已看' }
+  if (!csrf) return { ok: false, error: 'Cookie 里缺少 bili_jct，无法标记已看' }
+  const aidNum = toPositiveNumber(aid)
+  const cidNum = toPositiveNumber(cid)
+  if (!aidNum) return { ok: false, error: '缺少 aid，无法标记已看' }
+  if (!cidNum) return { ok: false, error: '缺少 cid，无法标记已看' }
+  const seconds = Math.max(1, Math.round(Number(progress) || 0))
+
+  const body = new URLSearchParams({
+    aid: String(aidNum),
+    cid: String(cidNum),
+    progress: String(seconds),
+    platform: 'android',
+    csrf,
+  })
+
+  let res
+  try {
+    res = await request(REPORT_URL, {
+      method: 'POST',
+      headers: {
+        Cookie: cookieHeader,
+        Referer: REFERER,
+        Accept: ACCEPT,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: String(body),
+      signal,
+    })
+  } catch (err) {
+    return { ok: false, error: describeRequestError(err) }
+  }
+  if (res.status < 200 || res.status >= 300) {
+    return { ok: false, error: mapBiliHttpStatus(res.status) }
+  }
+  let payload
+  try {
+    payload = await res.json()
+  } catch {
+    return { ok: false, error: 'B站上报进度接口返回的不是 JSON' }
+  }
+  const code = Number(payload && payload.code)
+  if (code !== 0) {
+    return { ok: false, error: mapBiliCode(code, payload && payload.message) || '上报观看进度失败' }
+  }
+  return { ok: true, error: null }
 }
 
 /**
