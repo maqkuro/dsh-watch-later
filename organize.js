@@ -14,6 +14,7 @@
 import { getItem, getItems, updateItem, setItemContent } from './store.js'
 import { classifyItems } from './ai.js'
 import { resolveContent } from './content.js'
+import { isXhsCoolingDown, xhsCooldownError } from './xhs-guard.js'
 import { backfillCovers } from './cover-backfill.js'
 import { ORGANIZE_VERSION, evaluateState, isRealCover } from './organize-core.js'
 import { withTopic } from './topics.js'
@@ -87,6 +88,8 @@ function needsContent(item) {
 async function prepareContent(item) {
   if (!needsContent(item)) return
   if (!item.url) return
+  // 风控冷却期：不抓、不写错误，条目留在 pending 等下一轮整理
+  if (item.kind === 'xhs' && isXhsCoolingDown()) return
   const content = await resolveContent(item, { force: false })
   if (content && typeof content === 'object') {
     try {
@@ -301,6 +304,10 @@ export async function sweepDeadLinks(options = {}) {
     .slice(0, limit)
   const summary = { checked: 0, marked: 0, recovered: 0, still: 0 }
   for (const item of pool) {
+    if (item.kind === 'xhs' && isXhsCoolingDown()) {
+      summary.still += 1
+      continue
+    }
     try {
       const content = await resolveContent(item, { force: true })
       const before = Boolean(item.invalid)

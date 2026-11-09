@@ -9,6 +9,7 @@
 import { KINDS } from './score.js'
 import { updateItem, getItems, getSettings, setItemContent } from './store.js'
 import { resolveContent, contentNeedsRetry } from './content.js'
+import { isXhsCoolingDown } from './xhs-guard.js'
 import { TOPICS, topicTagOf, withTopic } from './topics.js'
 import {
   ORGANIZE_VERSION,
@@ -275,12 +276,14 @@ export async function classifyItems(ctx, items, options = {}) {
  * 之前 autoClassifyRecent 只把标题/摘要喂给模型，被微信拦截的公众号只剩一句标题。
  * 这里在过大模型之前补齐正文；命中新鲜缓存就不重复抓（浏览器通道很贵）。
  */
-const CONTENT_PREFETCH_KINDS = new Set(['wechat'])
+const CONTENT_PREFETCH_KINDS = new Set(['wechat', 'xhs'])
 
 async function prefetchIngestContent(items) {
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index]
     if (!item || !CONTENT_PREFETCH_KINDS.has(item.kind)) continue
+    // 小红书还在风控冷却里就别抓：模型照样能凭标题/摘要整理，条目留待下一轮补正文
+    if (item.kind === 'xhs' && isXhsCoolingDown()) continue
     const cached = item.content
     if (cached && cached.fetchedAt && cached.text && !contentNeedsRetry(cached)) continue
     try {

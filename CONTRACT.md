@@ -978,3 +978,47 @@ Chrome 里的信任态会自动放行，正文随即出现。
 | --- | --- | --- |
 | POST | `/delete` | `{ids:[...]}` 批量删除（最多 2000 条）→ `{ok,deleted,failed}`；`{id}` 单条仍兼容 |
 | POST | `/invalid` | `{action:'mark'|'clear', ids:[...]}`；`clear` 用于「恢复」 |
+
+## 29. 小红书风控闸门（2026-11-09 追加）
+
+小红书按 IP 做风控：连续抓一百多条后整站 302 到 `/404/sec_*`（真浏览器里是
+`error_code=300031 当前笔记暂时无法浏览`），连原来能打开的笔记也一起打不开。
+所以「入库预抓 / AI 整理 / 封面补齐 / 详情页直读 / 失效巡检」五条链路统一过闸门 `xhs-guard.js`。
+
+### 29.1 闸门行为
+
+| 能力 | 规则 |
+| --- | --- |
+| 节流 | 两次小红书抓取间隔 ≥ 6 秒（`waitXhsTurn`，跨进程看 `lastFetchAt`） |
+| 冷却 | 命中一次风控 → 冷却 30 分钟；连续命中翻倍（60 / 120 分钟封顶） |
+| 冷却期内 | 直接返回 `error:「小红书风控冷却中（约 N 分钟后重试），本条先保留待补」`，**不打网络、不计失败、不写失效** |
+| 命中判定 | 跳转 `/404/sec_*`、页面含 `xhs_sec_server`，或错误文案含 `sec_404 / sec_server / 风控 / 300031 / 暂时无法浏览` |
+| 恢复 | 抓到正常笔记即清空连续命中与冷却 |
+
+状态文件：`$DATA_DIR/xhs-guard.json`
+```jsonc
+{ "lastFetchAt": "2026-11-09T08:59:23.836Z", "blockedUntil": "2026-11-09T09:29:42.349Z",
+  "consecutiveBlocks": 1, "lastBlockAt": "...", "lastSuccessAt": null }
+```
+`GET /health` 增加 `xhsGuard` 字段暴露同一份状态（`cooling / cooldownMs / consecutiveBlocks`）。
+
+### 29.2 各链路接入点
+
+- **入库预抓（ai.prefetchIngestContent）**：`CONTENT_PREFETCH_KINDS` 加入 `xhs`；冷却期内整段跳过，
+  模型照常凭标题/摘要整理，正文下一轮再补。
+- **AI 整理（organize.prepareContent）**：冷却期内不抓、不覆盖已有正文，条目留在 pending。
+- **封面补齐（cover-backfill）**：冷却期内 xhs 全部跳过；正常时每条 ≥ 6 秒，连续两次被拦即停手。
+- **失效巡检（organize.sweepInvalid）**：冷却期内跳过 xhs，避免把风控误判成「内容已失效」。
+- **详情页（`GET /content`）**：命中冷却时秒回（实测 34ms），返回已有封面/正文，不再空等浏览器通道。
+
+### 29.3 失效判定例外（修正 §28.2）
+
+`store.setItemContent` 先判风控：
+
+```js
+const RISK_CONTROL_PATTERN = /sec_404|sec_server|风控|300031|暂时无法浏览|冷却中/i
+if (contentError && RISK_CONTROL_PATTERN.test(contentError)) item.invalid = null   // 风控不是失效，并撤销误判
+else if (contentError && DEAD_PATTERN.test(contentError)) item.invalid = { reason, at }
+```
+
+教训：2026-11-09 曾有 4 条小红书被风控挡住的笔记因为错误文案里带「404」被判成失效、从列表里消失。

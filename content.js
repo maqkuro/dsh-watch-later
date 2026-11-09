@@ -15,6 +15,7 @@ import { getCookie, saveMediaBytes, MAX_IMAGES as MAX_ITEM_IMAGES } from './stor
 import { fetchPageViaBrowser } from './login/chrome-login.js'
 import { fetchWechatHtmlViaBsk } from './wechat.js'
 import { classifyUrl } from './score.js'
+import { isXhsCoolingDown, xhsCooldownError, waitXhsTurn, xhsFetchBlocked, xhsFetchSucceeded } from './xhs-guard.js'
 
 export const CONTENT_TTL_MS = 7 * 86400e3
 const MAX_TEXT = 20000
@@ -433,15 +434,27 @@ async function xiaohongshuContent(item) {
   let blocked = false
   let ogImage = null
 
+  // 风控冷却期内直接返回可重试错误：不打网络、不占额度、不写失效。
+  if (isXhsCoolingDown()) {
+    const hasImages = Array.isArray(item.images) && item.images.length > 0
+    return {
+      ...emptyContent('page', xhsCooldownError()),
+      text: (item.content && item.content.text) || item.summary || null,
+      images: hasImages ? item.images : item.cover ? [item.cover] : [],
+    }
+  }
+
   // 0) 手机 UA 直取分享页：同一链接 PC UA 只会拿到首页（没有笔记数据），手机 UA 会带上
   //    noteData.data.noteData（标题 / 正文 / imageList 图集），免登录，1 秒内返回。
   try {
+    await waitXhsTurn()
     const mobilePage = await fetchPage(item.url, cookie || undefined, MOBILE_UA)
     note = xhsNoteFromState(parseXiaohongshuState(mobilePage.html), noteId)
     if (!note) {
       if (isXhsBlockedPage(mobilePage.html, mobilePage.finalUrl)) {
         blocked = true
-        lastError = '小红书风控拦截（sec_404），自动退避后重试'
+        xhsFetchBlocked()
+        lastError = '小红书风控拦截（sec_404），已进入冷却，稍后自动重试'
       } else {
         lastError = '手机分享页没有笔记数据'
         ogImage = extractOgImage(mobilePage.html, item.url)
@@ -451,6 +464,15 @@ async function xiaohongshuContent(item) {
     lastError = String(error?.message || error)
   }
 
+  // 已经吃风控了就别换通道继续撞：同一个 IP，换 UA 只会把冷却拉长。
+  if (blocked && !note) {
+    return {
+      ...emptyContent('page', '小红书风控拦截（sec_404），已进入冷却，稍后自动重试'),
+      text: (item.content && item.content.text) || item.summary || null,
+      images: Array.isArray(item.images) && item.images.length > 0 ? item.images : item.cover ? [item.cover] : [],
+    }
+  }
+
   // 1) 主人已登录的 Chrome（BrowserSkill）：小红书对 Node fetch / 无头浏览器按登录态+指纹拦截，
   //    只有真人会话能拿到页面里的 __INITIAL_STATE__（真图 + 正文）。实测 1-2 秒/条。
   if (!note) {
@@ -458,7 +480,7 @@ async function xiaohongshuContent(item) {
       const viaBsk = await fetchWechatHtmlViaBsk(item.url, { timeoutMs: 30000 })
       if (viaBsk.ok && viaBsk.html) {
         note = xhsNoteFromState(parseXiaohongshuState(viaBsk.html), noteId)
-        if (!note) lastError = '小红书笔记已删除或不可见（404）'
+        if (!note) lastError = '小红书页面没有笔记数据（可能未登录或笔记已下架）'
       } else if (viaBsk.error) {
         lastError = lastError || viaBsk.error
       }
@@ -514,6 +536,7 @@ async function xiaohongshuContent(item) {
     if (tags.length) parts.push('标签：' + tags.join(' / '))
   }
   const text = tidyText(parts.join('\n'), MAX_TEXT)
+  xhsFetchSucceeded()
   const remoteImages = xhsImages(note)
   const localImages = remoteImages.length > 0 ? await mirrorRemoteImages(remoteImages) : []
   return {

@@ -38,6 +38,7 @@ import {
 import { deriveItem } from './score.js'
 import { agentInfo } from './agent.js'
 import { mediaInfo } from './media.js'
+import { xhsGuardStatus } from './xhs-guard.js'
 import { readWorks, syncWorks, updateWork, deleteWork, addWork } from './works.js'
 import { extractImportCandidates } from './import-text.js'
 import { resolvePreview } from './enrich.js'
@@ -196,7 +197,7 @@ async function handleSnapshot(_req, res, ctx) {
 
 async function handleHealth(_req, res, ctx) {
   const info = aiInfo(ctx)
-  sendJson(res, 200, { ok: true, ...stats(), ai: info, paths: { data: DATA_DIR, media: MEDIA_DIR, inbox: INBOX_DIR } })
+  sendJson(res, 200, { ok: true, ...stats(), ai: info, xhsGuard: xhsGuardStatus(), paths: { data: DATA_DIR, media: MEDIA_DIR, inbox: INBOX_DIR } })
 }
 
 async function handleAdd(req, res, ctx) {

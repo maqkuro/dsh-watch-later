@@ -14,6 +14,7 @@ import { getItem, getItems, updateItem, MAX_IMAGES, MEDIA_DIR } from './store.js
 import { resolveContent } from './content.js'
 import { faviconCover, generateCoverFor, pageCover } from './cover-art.js'
 import { wechatPreviewForItem, shouldTrySogou } from './sogou.js'
+import { isXhsCoolingDown } from './xhs-guard.js'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -113,7 +114,7 @@ export async function backfillCovers(options = {}) {
   for (const item of pending) {
     summary.checked += 1
     let covered = false
-    if (item.kind === 'xhs' && xhsRestBlocked) {
+    if (item.kind === 'xhs' && (xhsRestBlocked || isXhsCoolingDown())) {
       summary.skipped += 1
       continue
     }

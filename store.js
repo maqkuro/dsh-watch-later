@@ -341,6 +341,11 @@ export function isUnorganized(ai) {
 
 /** 失效原因 → 归一化。markInvalid 只认「已删除/不见了/404」这一类判定。 */
 const DEAD_PATTERN = /已删除|页面不见了|笔记不存在|链接已失效|404|不存在或已删除|已下线/i
+/**
+ * 平台风控（小红书 sec_404 / 冷却中）不是「内容没了」——这类错误必须可重试，
+ * 绝不能把条目挂进失效区（主人 2026-11-09：风控也要管入库与 AI 整理流程）。
+ */
+const RISK_CONTROL_PATTERN = /sec_404|sec_server|风控|300031|暂时无法浏览|冷却中/i
 
 function normalizeInvalid(value) {
   if (!value || typeof value !== 'object') return null
@@ -740,7 +745,10 @@ export function setItemContent(id, content) {
   if (!item) return null
   item.content = content && typeof content === 'object' ? content : null
   const contentError = content && typeof content === 'object' ? String(content.error || '') : ''
-  if (contentError && DEAD_PATTERN.test(contentError)) {
+  if (contentError && RISK_CONTROL_PATTERN.test(contentError)) {
+    // 被风控挡住：保留条目，并撤销之前可能被风控带偏的失效判定（真删了的下一轮会重新挂上）
+    item.invalid = null
+  } else if (contentError && DEAD_PATTERN.test(contentError)) {
     item.invalid = { reason: contentError.slice(0, 200), at: new Date().toISOString() }
   } else if (contentError === '' && content && Array.isArray(content.images) && content.images.length > 0 && item.invalid) {
     // 内容又抓到了，说明失效判定是误杀
