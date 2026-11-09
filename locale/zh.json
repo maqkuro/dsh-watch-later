@@ -7,5 +7,6 @@
   "topicsEmptyTitle": "还没有可分类的条目",
   "topicsEmptyDesc": "把内容转发给大肥鱼，它会自动打上分类标签",
   "topicsUnsorted": "待归档",
+  "remove": "移除",
   "topicsMore": "还有 {n} 条"
 }

@@ -321,6 +321,8 @@ test('parseToviewResponse：字段映射 + 封面 https 化 + 按添加时间倒
   const [latest, earlier] = parsed.items
   assert.deepEqual(latest, {
     remoteId: 'BV1LQ4y1T7Xh',
+    // aid 必须原样带出来：写回删除只认数字 aid，新版视频无法由 bvid 反推
+    aid: 710350011,
     title: '最新添加的视频',
     url: 'https://www.bilibili.com/video/BV1LQ4y1T7Xh',
     cover: 'https://i0.hdslb.com/bfs/archive/b.jpg',
@@ -328,6 +330,7 @@ test('parseToviewResponse：字段映射 + 封面 https 化 + 按添加时间倒
     durationSec: 169,
     addedAt: new Date(1587041785 * 1000).toISOString(),
   })
+  assert.equal(earlier.aid, 200333024)
   assert.equal(earlier.cover, 'https://i1.hdslb.com/bfs/archive/a.jpg')
   assert.equal(earlier.author, '山新')
   assert.equal(earlier.durationSec, 218)

@@ -22,6 +22,7 @@
     "import-text.js",
     "share-inbox.js",
     "sync-run.js",
+    "remove.js",
     "score.js",
     "classify.js",
     "client.js",

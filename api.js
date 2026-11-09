@@ -11,7 +11,6 @@ import {
   buildSnapshot,
   addItem,
   updateItem,
-  deleteItem,
   getItem,
   getItems,
   markInvalid,
@@ -50,6 +49,7 @@ import { ingestArchiveZip } from './zip-ingest.js'
 import { backfillCovers, isPlaceholderCover, isGeneratedCover } from './cover-backfill.js'
 import { buildClusters } from './cluster.js'
 import { runSync } from './sync-run.js'
+import { removeItems, removeRemoteOnly } from './remove.js'
 import { fetchAccount as fetchBiliAccount } from './sync/bili.js'
 import { parseShareText, resolveShareUrl } from './sync/douyin.js'
 
@@ -323,42 +323,63 @@ async function handleAction(req, res) {
   const id = typeof body.id === 'string' ? body.id : ''
   if (!id) throw new Error('缺少 id')
   const action = String(body.action || '')
+  // 「移除」= 本地删除 + 能写回的远端移出；结果字段和 /delete 保持一致。
+  if (action === 'remove') {
+    const result = await removeItems([id])
+    sendJson(res, 200, { ok: true, id, action, deleted: result.removed, ...result })
+    return
+  }
   const patch = {}
-  if (action === 'done') patch.status = 'done'
-  else if (action === 'archive') patch.status = 'archived'
-  else if (action === 'restore') patch.status = 'inbox'
+  let remote = null
+  if (action === 'done') {
+    patch.status = 'done'
+    // 已读也要写回：B站没有"标记已读"接口，移出稍后再看是唯一能表达"看完了"的动作。
+    // 本地条目保留（不删除、不写墓碑），失败也不阻断本地标记。
+    try {
+      remote = await removeRemoteOnly(getItem(id))
+    } catch (err) {
+      remote = { provider: '', ok: false, unsupported: false, error: (err && err.message) || String(err) }
+    }
+  } else if (action === 'restore') patch.status = 'inbox'
   else if (action === 'start') patch.status = 'doing'
   else if (action === 'snooze') {
     const until = typeof body.until === 'string' && Number.isFinite(Date.parse(body.until)) ? new Date(Date.parse(body.until)).toISOString() : new Date(Date.now() + 86400e3).toISOString()
     patch.snoozedUntil = until
   } else throw new Error('未知操作：' + action)
   const item = updateItem(id, patch)
-  sendJson(res, 200, { ok: true, item: viewOf(item) })
+  const payload = { ok: true, item: viewOf(item) }
+  if (remote) payload.remote = remote
+  sendJson(res, 200, payload)
 }
 
+/**
+ * 移除条目（单条 { id } 或批量 { ids }）。
+ * 走 remove.js：本地删除 + B站能写回就写回，写不回留墓碑防复活；抖音只删本地。
+ * 响应里 removed 是新字段；deleted 保留旧形状（批量=条数，单条=布尔），
+ * 老客户端（失效 tab 的「删除选中 / 清空全部」）不用改也能继续工作。
+ */
 async function handleDelete(req, res) {
   if (!requireMethod(req, res, ['POST'])) return
   const body = await readRequestBody(req)
-  // 批量删除：{ ids: [...] }（失效 tab 的「删除选中 / 清空全部」都走这里）
-  if (Array.isArray(body.ids) && body.ids.length > 0) {
-    const ids = body.ids.map((id) => String(id || '')).filter(Boolean).slice(0, 2000)
-    let deleted = 0
-    const failed = []
-    for (const id of ids) {
-      try {
-        deleteItem(id)
-        deleted += 1
-      } catch {
-        failed.push(id)
-      }
-    }
-    sendJson(res, 200, { ok: true, deleted, failed: failed.length, ids: ids.slice(0, deleted) })
-    return
-  }
-  const id = typeof body.id === 'string' ? body.id : ''
-  if (!id) throw new Error('缺少 id')
-  deleteItem(id)
-  sendJson(res, 200, { ok: true, deleted: true, id })
+  const batch = Array.isArray(body.ids) && body.ids.length > 0
+  const ids = batch
+    ? body.ids.map((id) => String(id || '')).filter(Boolean).slice(0, 2000)
+    : typeof body.id === 'string' && body.id
+      ? [body.id]
+      : []
+  if (!ids.length) throw new Error('缺少 id 或 ids')
+  const result = await removeItems(ids)
+  sendJson(res, 200, {
+    ok: true,
+    removed: result.removed,
+    // deleted 是给老响应/老客户端留的兼容字段：批量时是条数，单条时是布尔
+    deleted: batch ? result.removed : result.removed > 0,
+    failed: Math.max(0, ids.length - result.removed),
+    remoteRemoved: result.remoteRemoved,
+    remoteFailed: result.remoteFailed,
+    unsupported: result.unsupported,
+    errors: result.errors,
+  })
 }
 
 /** 失效条目：标记 / 取消标记（删除走 /delete 的批量分支）。 */

@@ -445,10 +445,10 @@ window.__ModuleLoader__.load({
       pushLibraryFailedCount: '{n} 张加入失败',
       batchDoneToast: '已标记完成 {n} 张',
       batchArchiveToast: '已归档 {n} 张',
-      batchDeleteToast: '已删除 {n} 张',
+      batchDeleteToast: '已移除 {n} 张',
       batchFailed: '{n} 张操作失败',
       batchBusy: '处理中…',
-      confirmDeleteSelected: '确认删除 {n} 张',
+      confirmDeleteSelected: '确认移除 {n} 张',
       invalidTotal: '失效 {n} 条',
       invalidSelected: '已选 {n} 条',
       invalidRestore: '恢复',
@@ -514,6 +514,12 @@ window.__ModuleLoader__.load({
       saveChanges: '保存修改',
       markDone: '完成',
       archive: '归档',
+      // 2026-11-09：归档 + 删除合并为「移除」（本地删除，B站可写回，抖音需手动）
+      remove: '移除',
+      removeConfirm: '确认移除',
+      removeConfirmHint: 'B站条目会同时从 B站稍后再看移出（不可撤销）；抖音条目需要手动去 App 里移出。',
+      removeSelected: '移除选中',
+      toastRemoved: '已移除',
       details: '详情',
       deleteItem: '删除',
       confirmDelete: '确认删除',
@@ -927,10 +933,10 @@ window.__ModuleLoader__.load({
       pushLibraryFailedCount: '{n} failed to add',
       batchDoneToast: '{n} marked done',
       batchArchiveToast: '{n} archived',
-      batchDeleteToast: '{n} deleted',
+      batchDeleteToast: '{n} removed',
       batchFailed: '{n} failed',
       batchBusy: 'Working…',
-      confirmDeleteSelected: 'Delete {n} images',
+      confirmDeleteSelected: 'Remove {n} images',
       invalidTotal: '{n} invalid',
       invalidSelected: '{n} selected',
       invalidRestore: 'Restore',
@@ -996,6 +1002,11 @@ window.__ModuleLoader__.load({
       saveChanges: 'Save changes',
       markDone: 'Done',
       archive: 'Archive',
+      remove: 'Remove',
+      removeConfirm: 'Confirm remove',
+      removeConfirmHint: 'Bilibili items are also removed from your Bilibili watch-later list (cannot be undone); Douyin items must be removed manually in the app.',
+      removeSelected: 'Remove selected',
+      toastRemoved: 'Removed',
       details: 'Details',
       deleteItem: 'Delete',
       confirmDelete: 'Confirm delete',
@@ -2735,8 +2746,8 @@ window.__ModuleLoader__.load({
           ),
           h(
             'button',
-            { type: 'button', className: 'wl-card-act', title: tr(t, 'archive'), 'aria-label': tr(t, 'archive'), disabled: pending, onClick: runAction('archive') },
-            h(Icon, { name: 'archive', size: 14 }),
+            { type: 'button', className: 'wl-card-act', title: tr(t, 'remove'), 'aria-label': tr(t, 'remove'), disabled: pending, onClick: runAction('remove') },
+            h(Icon, { name: 'trash', size: 14 }),
           ),
           h(
             'button',
@@ -3217,19 +3228,6 @@ window.__ModuleLoader__.load({
                     h(Icon, { name: 'check', size: 14 }),
                     tr(t, 'markDone'),
                   ),
-              isArchived
-                ? null
-                : h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'wl-btn',
-                      title: tr(t, 'archive'),
-                      onClick: () => runAction('archive'),
-                    },
-                    h(Icon, { name: 'archive', size: 14 }),
-                    tr(t, 'archive'),
-                  ),
               h(
                 'button',
                 {
@@ -3258,29 +3256,35 @@ window.__ModuleLoader__.load({
               h('span', { className: 'wl-spacer' }),
               confirmDelete
                 ? h(
-                    'span',
-                    { className: 'wl-confirm' },
+                    React.Fragment,
+                    null,
+                    // 确认时把远端后果写清楚：B站会同步移出且不可撤销，抖音得自己进 App 移
+                    h('p', { className: 'wl-field-hint wl-remove-hint' }, tr(t, 'removeConfirmHint')),
                     h(
-                      'button',
-                      {
-                        type: 'button',
-                        className: 'wl-btn wl-btn-danger',
-                        title: tr(t, 'confirmDelete'),
-                        disabled: deleting,
-                        onClick: remove,
-                      },
-                      tr(t, 'confirmDelete'),
-                    ),
-                    h(
-                      'button',
-                      {
-                        type: 'button',
-                        className: 'wl-btn wl-btn-sm',
-                        title: tr(t, 'cancel'),
-                        disabled: deleting,
-                        onClick: () => setConfirmDelete(false),
-                      },
-                      tr(t, 'cancel'),
+                      'span',
+                      { className: 'wl-confirm' },
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'wl-btn wl-btn-danger',
+                          title: tr(t, 'removeConfirm'),
+                          disabled: deleting,
+                          onClick: remove,
+                        },
+                        tr(t, 'removeConfirm'),
+                      ),
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'wl-btn wl-btn-sm',
+                          title: tr(t, 'cancel'),
+                          disabled: deleting,
+                          onClick: () => setConfirmDelete(false),
+                        },
+                        tr(t, 'cancel'),
+                      ),
                     ),
                   )
                 : h(
@@ -3288,11 +3292,11 @@ window.__ModuleLoader__.load({
                     {
                       type: 'button',
                       className: 'wl-btn wl-btn-danger-ghost',
-                      title: tr(t, 'deleteItem'),
+                      title: tr(t, 'remove'),
                       onClick: () => setConfirmDelete(true),
                     },
                     h(Icon, { name: 'trash', size: 14 }),
-                    tr(t, 'deleteItem'),
+                    tr(t, 'remove'),
                   ),
             ),
           ),
@@ -3947,12 +3951,12 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'wl-card-act',
-              title: tr(t, 'archive'),
-              'aria-label': tr(t, 'archive'),
+              title: tr(t, 'remove'),
+              'aria-label': tr(t, 'remove'),
               disabled: pending,
-              onClick: stop(() => props.onAction(item, 'archive')),
+              onClick: stop(() => props.onAction(item, 'remove')),
             },
-            h(Icon, { name: 'archive', size: 14 }),
+            h(Icon, { name: 'trash', size: 14 }),
           ),
           h(
             'button',
@@ -4801,15 +4805,15 @@ window.__ModuleLoader__.load({
             {
               type: 'button',
               className: 'wl-card-act',
-              title: tr(t, 'archive'),
-              'aria-label': tr(t, 'archive'),
+              title: tr(t, 'remove'),
+              'aria-label': tr(t, 'remove'),
               disabled: pending,
               onClick: (event) => {
                 event.stopPropagation()
-                if (typeof props.onAction === 'function') props.onAction(item, 'archive')
+                if (typeof props.onAction === 'function') props.onAction(item, 'remove')
               },
             },
-            h(Icon, { name: 'archive', size: 14 }),
+            h(Icon, { name: 'trash', size: 14 }),
           ),
         ),
       )
@@ -6124,8 +6128,8 @@ window.__ModuleLoader__.load({
           }
           if (count > 0) {
             if (typeof props.notify === 'function') {
-              const key = action === 'archive' ? 'batchArchiveToast' : 'batchDoneToast'
-              props.notify(ti(t, key, { n: count }), failures.length ? 'warn' : 'ok')
+              // 「归档」并入「移除」后，批量动作只剩「完成」
+              props.notify(ti(t, 'batchDoneToast', { n: count }), failures.length ? 'warn' : 'ok')
             }
           } else if (failures.length && typeof props.notify === 'function') {
             props.notify(ti(t, 'batchFailed', { n: failures.length }), 'error')
@@ -6271,18 +6275,6 @@ window.__ModuleLoader__.load({
                 h(Icon, { name: 'check', size: 13 }),
                 tr(t, 'markDone'),
               ),
-              h(
-                'button',
-                {
-                  type: 'button',
-                  className: 'wl-btn wl-btn-sm',
-                  title: tr(t, 'archive'),
-                  disabled: Boolean(pending),
-                  onClick: () => runBatch('archive'),
-                },
-                h(Icon, { name: 'archive', size: 13 }),
-                tr(t, 'archive'),
-              ),
               confirmDelete
                 ? h(
                     'span',
@@ -6315,12 +6307,12 @@ window.__ModuleLoader__.load({
                     {
                       type: 'button',
                       className: 'wl-btn wl-btn-sm wl-btn-danger-ghost',
-                      title: tr(t, 'deleteItem'),
+                      title: tr(t, 'removeSelected'),
                       disabled: Boolean(pending),
                       onClick: () => setConfirmDelete(true),
                     },
                     h(Icon, { name: 'trash', size: 13 }),
-                    tr(t, 'deleteItem'),
+                    tr(t, 'removeSelected'),
                   ),
               h(
                 'button',
@@ -6417,12 +6409,12 @@ window.__ModuleLoader__.load({
                 'button',
                 {
                   type: 'button',
-                  className: 'wl-btn wl-btn-sm',
-                  title: tr(t, 'archive'),
-                  onClick: () => runLightboxAction('archive'),
+                  className: 'wl-btn wl-btn-sm wl-btn-danger-ghost',
+                  title: tr(t, 'remove'),
+                  onClick: () => runLightboxAction('remove'),
                 },
-                h(Icon, { name: 'archive', size: 13 }),
-                tr(t, 'archive'),
+                h(Icon, { name: 'trash', size: 13 }),
+                tr(t, 'remove'),
               ),
             ),
             onClose: () => setViewing(null),
@@ -8040,7 +8032,7 @@ window.__ModuleLoader__.load({
 
       const actionMessage = (action) => {
         if (action === 'done') return tr(t, 'toastDone')
-        if (action === 'archive') return tr(t, 'toastArchived')
+        if (action === 'remove') return tr(t, 'toastRemoved')
         if (action === 'restore') return tr(t, 'toastRestored')
         if (action === 'snooze') return tr(t, 'toastSnoozed')
         return ''
@@ -8067,7 +8059,8 @@ window.__ModuleLoader__.load({
 
       const deleteItem = (item) => {
         const id = asText(item && item.id)
-        return perform(id, () => postJson(API.remove, { id }), tr(t, 'toastDeleted'))
+        // /delete 现在就是「移除」：本地删除 + B站写回（抖音只能本地）
+        return perform(id, () => postJson(API.remove, { id }), tr(t, 'toastRemoved'))
       }
 
       const startItem = (item) => {
@@ -9636,6 +9629,8 @@ window.__ModuleLoader__.load({
       .wl-invalid-reason span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .wl-invalid-actions { flex: none; display: flex; align-items: center; gap: 6px; }
       .wl-invalid-notice { margin: 0; }
+      /* 移除确认提示：单独占一行，别把确认按钮挤走 */
+      .wl-remove-hint { flex: 1 0 100%; margin: 0; }
 
       @media (max-width: 720px) {
         .wl-header { padding: 14px 16px 0; }

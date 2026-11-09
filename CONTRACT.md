@@ -1022,3 +1022,48 @@ else if (contentError && DEAD_PATTERN.test(contentError)) item.invalid = { reaso
 ```
 
 教训：2026-11-09 曾有 4 条小红书被风控挡住的笔记因为错误文案里带「404」被判成失效、从列表里消失。
+
+## 28. 「移除」统一 + 已读写回（2026-11-09 追加，取代 §2 的 archive 语义）
+
+### 背景
+1. 原「归档」和「删除」是两个动作，主人要求合并成**一个「移除」**。
+2. 同步以前是纯单向（平台 → 本地），本地删了下次同步还会复活；主人要求**移除要写回平台**。
+3. 主人追加：**已读状态也要同步**。
+
+### 平台能力边界
+| 平台 | 移出稍后再看 | 标记已读 |
+|---|---|---|
+| B站 | ✅ `POST /x/v2/history/toview/del`（Cookie + csrf=`bili_jct`） | ❌ 无此接口 |
+| 抖音 | ❌ 缺 `a_bogus` 签名，未实现 | ❌ |
+
+所以「已读」在平台侧只能表达为**移出**；抖音两边都做不到，只在本地标记。
+
+### 语义（本地）
+- **已读 `done`**：平台移出 + **本地保留** status='done'，**不写墓碑**
+- **移除 `remove`**：平台移出 + **本地删除** + 写墓碑
+
+### aid 换算（关键坑）
+`toview/del` 只认数字 `aid`，而同步存的是 `bvid`。**不能用 `bvidToAid` 纯算法反推**：
+该算法只对早期 9 位 aid 成立，2026 年后新视频 aid 已到 15 位
+（实测 `BV1MqxQ6FE4P` → 117557197539987），算出来是**别的视频的 aid**，拿去删除等于误删用户其他视频。
+
+正确顺序：
+1. 同步时把接口返回的 `aid` 存进 `sync.stats.aid`（`mapToviewItem` 已带出）
+2. 老条目没有 `aid` → 调公开接口 `GET /x/web-interface/view?bvid=` 实时解析
+3. `normalizeAids` **只接受** `av号` / 纯数字，传 bvid 直接跳过，不猜
+
+### 墓碑
+`DATA_DIR/removed-remote.json`，key = `provider:remoteId`。
+- B站写回失败 → 写墓碑（本地已删、远端还在，不写就会同步复活）
+- **抖音移除 → 必写墓碑**（写不回平台，否则下次同步又导回来）
+- `sync-run.js` 的 `mergeRemoteItems` 循环开头查墓碑，命中就跳过
+
+### 接口
+- `POST /action {action:'remove'}` → 同 `/delete` 单条
+- `POST /action {action:'done'}` → 本地置 done + 远端移出，响应带 `remote: {ok, unsupported, error}`
+- `POST /delete {id|ids}` → `{removed, deleted, remoteRemoved, remoteFailed, unsupported, errors}`
+- `archive` 动作已下线（返回 400）
+
+### 迁移
+`migrateArchivedV1`：存量 `status='archived'` → `'done'`，保留 `archivedAt`，
+并把 `readAt/updatedAt` 刷新为当前时间——否则会立刻被 retention 判过期删掉。

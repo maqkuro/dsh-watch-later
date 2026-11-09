@@ -9,6 +9,7 @@
 import { fetchWatchLater as fetchBiliWatchLater } from './sync/bili.js'
 import { fetchWatchLater as fetchDouyinWatchLater } from './sync/douyin.js'
 import { getCookie, getSyncState, setSyncState, addItem, findBySync, updateItem, getSettings } from './store.js'
+import { isRemoteRemoved } from './remove.js'
 
 const PROVIDERS = ['bilibili', 'douyin']
 
@@ -41,6 +42,8 @@ function remoteToItem(provider, remote, syncedAt) {
       stats: {
         durationSec: Number.isFinite(Number(remote.durationSec)) ? Number(remote.durationSec) : null,
         addedAt: remote.addedAt || null,
+        // B站：写回删除只认数字 aid，而新版视频的 aid 无法由 bvid 反推，必须存接口给的原值
+        aid: Number.isFinite(Number(remote.aid)) && Number(remote.aid) > 0 ? Number(remote.aid) : null,
       },
     },
   }
@@ -55,6 +58,12 @@ function mergeRemoteItems(provider, remotes) {
   for (const remote of Array.isArray(remotes) ? remotes : []) {
     try {
       if (!remote || !remote.remoteId) {
+        skipped += 1
+        continue
+      }
+      // 本地「移除」过但没能在平台上删掉的（B站失败 / 抖音写不回），
+      // 留过墓碑就不再导回来，否则用户会看到「删了又复活」。
+      if (isRemoteRemoved(provider, remote.remoteId)) {
         skipped += 1
         continue
       }

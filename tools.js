@@ -193,7 +193,7 @@ export function registerTools(ctx) {
     tools.register({
       name: 'watch_later_update',
       description:
-        '修改 DSH「稍后再看」里的一条：改分类 kind（游戏测评/攻略用 game、剧集动画用 drama、想借来用的参考素材用 idea）、标记完成/归档/恢复、改重要度或紧急度、改截止时间、改标题/摘要/标签/笔记、设置稍后提醒。id 必须来自 watch_later_list 或 watch_later_save 的返回。',
+        '修改 DSH「稍后再看」里的一条：改分类 kind（游戏测评/攻略用 game、剧集动画用 drama、想借来用的参考素材用 idea）、标记已读（done，会同时从 B站稍后再看移出）/恢复、改重要度或紧急度、改截止时间、改标题/摘要/标签/笔记、设置稍后提醒。id 必须来自 watch_later_list 或 watch_later_save 的返回。',
       parameters: {
         type: 'object',
         properties: {
@@ -202,7 +202,7 @@ export function registerTools(ctx) {
             type: 'object',
             properties: {
               kind: { type: 'string', enum: ['image', 'xhs', 'wechat', 'link', 'video', 'bilibili', 'douyin', 'drama', 'game', 'article', 'product', 'idea', 'other'] },
-              status: { type: 'string', enum: ['inbox', 'queued', 'doing', 'done', 'archived'] },
+              status: { type: 'string', enum: ['inbox', 'queued', 'doing', 'done'] },
               importance: { type: 'integer', minimum: 1, maximum: 5 },
               urgency: { type: 'integer', minimum: 1, maximum: 5 },
               deadline: { type: 'string', description: 'ISO 8601；空字符串表示清除' },

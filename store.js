@@ -47,6 +47,8 @@ export const MAX_IMAGES = 100
 const MAX_ITEMS = 4000
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024
 const KINDS_SET = new Set(KINDS)
+// archived 只为存量兼容保留：2026-11-09 起「归档」「删除」合并成「移除」，
+// 迁移（migrateArchivedV1）会把老 archived 全改成 done，之后不会再产生新归档。
 const STATUSES = new Set(['inbox', 'queued', 'doing', 'done', 'archived'])
 const DEADLINE_KINDS = new Set(['airing', 'event', 'expiry', 'release', 'deadline', 'none'])
 const CHANNELS = new Set(['manual', 'agent', 'inbox', 'paste', 'bilibili', 'douyin', 'zip'])
@@ -107,10 +109,12 @@ export function loadState() {
   state.items = Array.isArray(state.items) ? state.items.filter(isUsableItem) : []
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings && typeof state.settings === 'object' ? state.settings : {}) }
   const migrated = migrateWantTags(state)
+  // 放在 migrateTopics 之前：归档态条目会被跳过分类，先降级成 done 才能一起补分类
+  const archivedDone = migrateArchivedV1(state)
   const topicized = migrateTopics(state)
   const aiMigrated = migrateAiStates(state)
   const pruned = pruneState(state)
-  if (migrated || topicized || aiMigrated || pruned) saveState(state, true)
+  if (migrated || archivedDone || topicized || aiMigrated || pruned) saveState(state, true)
   cache = state
   return state
 }
@@ -144,6 +148,31 @@ function migrateWantTags(state) {
     changed += 1
   }
   state.migrations = { ...flags, wantV1: new Date().toISOString() }
+  return true
+}
+
+/**
+ * 一次性迁移（2026-11-09，「归档」并入「移除」）：存量 status='archived' → 'done'。
+ *
+ * 为什么不再保留 archived：归档和删除本来就是两套「不想再看到」的语义，
+ * 主人要求合成一个「移除」按钮，前端不再有归档入口；老数据直接按「已完成」处理，
+ * archivedAt 原样保留（溯源用）。
+ *
+ * 迁移时把 readAt/updatedAt 刷成现在：archived 以前不受 retention 清理，
+ * 变成 done 之后 pruneState 会按 readAt 算过期，不刷新的话老归档会在启动瞬间被删掉。
+ * 标记打上后不再重复执行。
+ */
+function migrateArchivedV1(state) {
+  const flags = state.migrations && typeof state.migrations === 'object' ? state.migrations : {}
+  if (flags.archivedV1) return false
+  const now = new Date().toISOString()
+  for (const item of state.items) {
+    if (!item || item.status !== 'archived') continue
+    item.status = 'done'
+    item.readAt = now
+    item.updatedAt = now
+  }
+  state.migrations = { ...flags, archivedV1: now }
   return true
 }
 
